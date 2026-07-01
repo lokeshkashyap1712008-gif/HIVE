@@ -5,17 +5,33 @@ FastAPI entry point — Phase 2 with economy, emotions, arena, and live dashboar
 Qwen Cloud Hackathon | Track 3: Agent Society
 """
 
+import sys
 import asyncio
 import json
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional
+
+# Defensive imports: provide actionable guidance if required packages are missing
+try:
+    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse
+    from pydantic import BaseModel
+    from typing import Optional
+except ModuleNotFoundError as e:
+    print("ERROR: Missing Python dependency:", e)
+    print("Interpreter:", sys.executable)
+    print()
+    print("To fix:")
+    print("  1) Install requirements into the current interpreter:")
+    print("       python -m pip install -r requirements.txt")
+    print("  2) Or run with the Python that already has the deps:")
+    print("       C:/Users/lokes/AppData/Local/Programs/Python/Python313/python.exe main.py")
+    print()
+    print("Alternatively, run run_server.bat which uses the known-good interpreter.")
+    sys.exit(1)
 
 from core.config import settings
 from core.llm_router import chat, initialize
@@ -55,16 +71,13 @@ async def lifespan(app: FastAPI):
     cleanup_task.cancel()
     event_snapshot_task.cancel()
     logger.info("HIVE shutting down...")
-
-
-# ===== APP =====
+    
 app = FastAPI(
     title="HIVE — Agent Operating System",
     description="An operating system where AI agents form temporary societies to solve problems.",
     version="2.0.0",
     lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

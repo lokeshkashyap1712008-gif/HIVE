@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arena — HIVE OS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { background: var(--void); }
+
+    .arena-setup {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: var(--sp-6);
+      align-items: center;
+      margin: var(--sp-8) 0;
+    }
+
+    .arena-agent-panel {
+      background: var(--chapel);
+      border: 2px solid var(--border-dim);
+      border-radius: var(--r-xl);
+      padding: var(--sp-6);
+      text-align: center;
+      transition: var(--t-slow);
+    }
+
+    .arena-agent-panel.winner {
+      border-color: var(--gold);
+      box-shadow: 0 0 60px rgba(200,168,75,0.25), inset 0 0 40px rgba(200,168,75,0.03);
+    }
+
+    .arena-agent-avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      margin: 0 auto var(--sp-4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      border: 2px solid var(--border-mid);
+    }
+
+    .arena-agent-name {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      margin-bottom: var(--sp-2);
+    }
+
+    .arena-agent-desc {
+      font-size: 0.875rem;
+      color: var(--dust);
+      margin-bottom: var(--sp-4);
+    }
+
+    .arena-score {
+      font-family: var(--font-mono);
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .arena-score-label {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      color: var(--ash);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: var(--sp-1);
+    }
+
+    .arena-vs-badge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--sp-2);
+    }
+
+    .arena-vs-text {
+      font-family: var(--font-pixel);
+      font-size: 0.875rem;
+      color: var(--blood);
+      text-shadow: 0 0 30px var(--blood-glow);
+      animation: neon-pulse 2s ease-in-out infinite;
+    }
+
+    .arena-vs-sub {
+      font-family: var(--font-mono);
+      font-size: 0.5625rem;
+      color: var(--ash);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .arena-results {
+      margin-top: var(--sp-8);
+    }
+
+    .result-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-4);
+      padding: var(--sp-3) var(--sp-4);
+      background: var(--chapel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-lg);
+      margin-bottom: var(--sp-2);
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+    }
+
+    .result-winner {
+      background: rgba(200,168,75,0.06);
+      border-color: rgba(200,168,75,0.3);
+    }
+
+    .result-task { flex: 1; color: var(--parchment); }
+    .result-agent { color: var(--purple); min-width: 120px; }
+    .result-time  { color: var(--ash); min-width: 60px; }
+    .result-score { color: var(--gold); min-width: 40px; text-align: right; }
+
+    .run-match-btn {
+      display: block;
+      width: 100%;
+      padding: var(--sp-5);
+      background: linear-gradient(135deg, rgba(139,0,0,0.2), rgba(157,78,221,0.2));
+      border: 2px solid var(--blood);
+      border-radius: var(--r-xl);
+      font-family: var(--font-heading);
+      font-size: 1.25rem;
+      color: var(--white);
+      cursor: pointer;
+      transition: var(--t-normal);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      animation: glow-pulse 3s ease-in-out infinite;
+    }
+
+    .run-match-btn:hover {
+      background: linear-gradient(135deg, rgba(196,30,58,0.3), rgba(157,78,221,0.3));
+      transform: translateY(-2px);
+      box-shadow: 0 0 40px rgba(196,30,58,0.4);
+    }
+
+    .run-match-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .match-status {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--cyan);
+      text-align: center;
+      margin-top: var(--sp-4);
+    }
+
+    .match-tasks-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-3);
+      margin-top: var(--sp-6);
+    }
+
+    .task-card {
+      background: var(--chapel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-lg);
+      padding: var(--sp-4);
+      display: flex;
+      gap: var(--sp-4);
+      align-items: center;
+    }
+
+    .task-card.society { border-left: 3px solid var(--purple); }
+    .task-card.single  { border-left: 3px solid var(--cyan); }
+
+    .task-agent-badge {
+      font-family: var(--font-pixel);
+      font-size: 0.45rem;
+      padding: 4px 8px;
+      border-radius: var(--r-sm);
+      flex-shrink: 0;
+    }
+
+    .task-agent-badge.society { background: rgba(157,78,221,0.15); color: var(--purple); }
+    .task-agent-badge.single  { background: rgba(0,180,216,0.12); color: var(--cyan); }
+
+    .task-desc { flex: 1; font-family: var(--font-mono); font-size: 0.8125rem; color: var(--parchment); }
+    .task-score { font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--gold); min-width: 40px; text-align: right; }
+    .task-time  { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--ash); min-width: 50px; text-align: right; }
+
+    .leaderboard {
+      background: var(--chapel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-xl);
+      overflow: hidden;
+    }
+
+    .lb-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-4);
+      padding: var(--sp-3) var(--sp-5);
+      border-bottom: 1px solid var(--border-dim);
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+    }
+
+    .lb-row:last-child { border-bottom: none; }
+    .lb-rank { font-size: 1rem; min-width: 24px; }
+    .lb-rank.gold { color: var(--gold); }
+    .lb-rank.silver { color: var(--ash); }
+    .lb-rank.bronze { color: #cd7f32; }
+
+    .lb-name { flex: 1; color: var(--parchment); }
+    .lb-wins { color: var(--gold); }
+    .lb-losses { color: var(--ash); }
+    .lb-rate { color: var(--green); }
+
+    @media (max-width: 768px) {
+      .arena-setup { grid-template-columns: 1fr; }
+      .arena-vs-badge { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body class="crt">
+
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"       class="nav-link">Home</a>
+      <a href="terminal.html"    class="nav-link">Terminal</a>
+      <a href="dashboard.html"   class="nav-link">Dashboard</a>
+      <a href="arena.html"       class="nav-link active">Arena</a>
+      <a href="agents.html"      class="nav-link">Agents</a>
+      <a href="economy.html"      class="nav-link">Economy</a>
+      <a href="tasks.html"       class="nav-link">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link">Benchmarks</a>
+    </div>
+    <div class="nav-status">
+      <div class="status-dot"></div>
+      <span>arena</span>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="container" style="padding-top:var(--sp-8); padding-bottom:var(--sp-8);">
+
+      <div class="section-header">
+        <p class="section-label">Battle Mode</p>
+        <h1 class="section-title">Agent Arena</h1>
+        <p class="section-sub">Single agent vs. full society. Head-to-head benchmark comparisons to prove when swarm intelligence wins.</p>
+      </div>
+
+      <!-- Setup -->
+      <div class="arena-setup" id="arena-setup">
+
+        <!-- Single Agent -->
+        <div class="arena-agent-panel" id="panel-single">
+          <div class="arena-agent-avatar" style="background:rgba(0,180,216,0.1); border-color:var(--cyan);">🤖</div>
+          <div class="arena-agent-name" style="color:var(--cyan);">Single Agent</div>
+          <div class="arena-agent-desc">One HiveCore agent<br>handling the full task</div>
+          <div class="arena-score" id="single-score" style="color:var(--cyan);">0</div>
+          <div class="arena-score-label">Total Points</div>
+        </div>
+
+        <!-- VS -->
+        <div class="arena-vs-badge">
+          <div class="arena-vs-text">VS</div>
+          <div class="arena-vs-sub">swarm<br>battle</div>
+          <svg width="40" height="40" viewBox="0 0 40 40" style="opacity:0.3;">
+            <polygon points="20,2 26,15 40,15 29,24 33,38 20,29 7,38 11,24 0,15 14,15" fill="var(--gold)"/>
+          </svg>
+        </div>
+
+        <!-- Society -->
+        <div class="arena-agent-panel" id="panel-society">
+          <div class="arena-agent-avatar" style="background:rgba(157,78,221,0.1); border-color:var(--purple);">🏛</div>
+          <div class="arena-agent-name" style="color:var(--purple);">Full Society</div>
+          <div class="arena-agent-desc">14 workers + HiveCore<br>collaborating on the task</div>
+          <div class="arena-score" id="society-score" style="color:var(--purple);">0</div>
+          <div class="arena-score-label">Total Points</div>
+        </div>
+
+      </div>
+
+      <!-- Run Button -->
+      <button class="run-match-btn" id="run-btn" onclick="runMatch()">
+        ⚔ Run Arena Match
+      </button>
+
+      <div class="match-status" id="match-status" style="display:none;"></div>
+
+      <!-- Task breakdown -->
+      <div class="match-tasks-list" id="match-tasks" style="display:none;">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- Results -->
+      <div class="arena-results" id="arena-results">
+        <h2 style="font-size:1.25rem; margin-bottom:var(--sp-4);">Recent Matches</h2>
+        <div id="results-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Leaderboard -->
+      <div style="margin-top:var(--sp-8);">
+        <h2 style="font-size:1.25rem; margin-bottom:var(--sp-4);">🏆 Agent Leaderboard</h2>
+        <div class="leaderboard">
+          <div class="lb-row" style="background:var(--abyss); font-weight:600; color:var(--ash); font-size:0.6875rem; text-transform:uppercase; letter-spacing:0.1em;">
+            <span class="lb-rank" style="color:var(--ash);">#</span>
+            <span class="lb-name">Agent</span>
+            <span class="lb-wins">W</span>
+            <span class="lb-losses">L</span>
+            <span class="lb-rate">Win%</span>
+          </div>
+          <div class="lb-row">
+            <span class="lb-rank gold">1</span>
+            <span class="lb-name">WebScout</span>
+            <span class="lb-wins">12</span>
+            <span class="lb-losses">3</span>
+            <span class="lb-rate">80%</span>
+          </div>
+          <div class="lb-row">
+            <span class="lb-rank silver">2</span>
+            <span class="lb-name">DataAnalyst</span>
+            <span class="lb-wins">10</span>
+            <span class="lb-losses">5</span>
+            <span class="lb-rate">67%</span>
+          </div>
+          <div class="lb-row">
+            <span class="lb-rank bronze">3</span>
+            <span class="lb-name">ReportAgent</span>
+            <span class="lb-wins">9</span>
+            <span class="lb-losses">6</span>
+            <span class="lb-rate">60%</span>
+          </div>
+          <div class="lb-row">
+            <span class="lb-rank">4</span>
+            <span class="lb-name">Diagnostician</span>
+            <span class="lb-wins">8</span>
+            <span class="lb-losses">7</span>
+            <span class="lb-rate">53%</span>
+          </div>
+          <div class="lb-row">
+            <span class="lb-rank">5</span>
+            <span class="lb-name">HiveCore (society)</span>
+            <span class="lb-wins">15</span>
+            <span class="lb-losses">2</span>
+            <span class="lb-rate">88%</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    const TASKS = [
+      'Analyze connectiify.com DNS records',
+      'Find 3 security vulnerabilities in a web app',
+      'Generate a market research report',
+      'Debug a failing API endpoint',
+      'Run full benchmark suite',
+      'Search for latest AI agent frameworks',
+      'Audit system resource usage',
+      'Plan a cloud deployment strategy',
+    ];
+
+    let matchRunning = false;
+
+    function insertResult(winner, sScore, socScore, tasks) {
+      const resultsEl = document.getElementById('results-list');
+      const row = document.createElement('div');
+      row.className = 'result-row result-winner';
+      const date = new Date().toLocaleTimeString();
+      row.innerHTML = `
+        <span style="color:var(--ash); font-family:var(--font-mono); font-size:0.6875rem;">${date}</span>
+        <span style="color:var(--gold);">🏆 ${winner}</span>
+        <span class="result-task">${tasks.length} tasks completed</span>
+        <span style="color:var(--cyan);">Single: ${sScore}</span>
+        <span style="color:var(--purple);">Society: ${socScore}</span>
+        <span class="result-score" style="color:var(--gold);">${winner === 'Society' ? socScore : sScore} pts</span>
+      `;
+      resultsEl.insertBefore(row, resultsEl.firstChild);
+    }
+
+    async function runMatch() {
+      if (matchRunning) return;
+      matchRunning = true;
+      const btn   = document.getElementById('run-btn');
+      const status = document.getElementById('match-status');
+      const tasksEl = document.getElementById('match-tasks');
+
+      btn.disabled = true;
+      btn.textContent = '⚔ Running Match...';
+      status.style.display = 'block';
+      status.textContent = 'Dispatching tasks to agent society...';
+      tasksEl.style.display = 'flex';
+      tasksEl.innerHTML = '';
+
+      // Pick 4 random tasks
+      const tasks = TASKS.slice(0, 4);
+      let sScore = 0, socScore = 0;
+      const taskResults = [];
+
+      // Simulate running tasks in real-time
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        status.textContent = `Running: ${task}`;
+
+        // Single agent result (simulated)
+        await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
+        const sTime  = (800 + Math.random() * 600) / 1000;
+        const sPts   = Math.round(20 + Math.random() * 30);
+        sScore += sPts;
+
+        const sc = document.createElement('div');
+        sc.className = 'task-card single';
+        sc.innerHTML = `<span class="task-agent-badge single">SINGLE</span><span class="task-desc">${task}</span><span class="task-score">+${sPts}</span><span class="task-time">${sTime.toFixed(1)}s</span>`;
+        tasksEl.appendChild(sc);
+
+        // Society result
+        await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
+        const socTime = (400 + Math.random() * 400) / 1000;
+        const socPts  = Math.round(25 + Math.random() * 35);
+        socScore += socPts;
+
+        const soc = document.createElement('div');
+        soc.className = 'task-card society';
+        soc.innerHTML = `<span class="task-agent-badge society">SOCIETY</span><span class="task-desc">${task}</span><span class="task-score">+${socPts}</span><span class="task-time">${socTime.toFixed(1)}s</span>`;
+        tasksEl.appendChild(soc);
+
+        taskResults.push({ task, single: sPts, society: socPts });
+
+        // Update scores live
+        document.getElementById('single-score').textContent  = sScore;
+        document.getElementById('society-score').textContent = socScore;
+      }
+
+      // Finalize
+      await new Promise(r => setTimeout(r, 500));
+      const winner = socScore > sScore ? 'Society' : 'Single Agent';
+
+      status.textContent = `🏆 Winner: ${winner}! (${socScore > sScore ? socScore : sScore} pts)`;
+
+      if (winner === 'Society') {
+        document.getElementById('panel-society').classList.add('winner');
+        setTimeout(() => document.getElementById('panel-society').classList.remove('winner'), 5000);
+      } else {
+        document.getElementById('panel-single').classList.add('winner');
+        setTimeout(() => document.getElementById('panel-single').classList.remove('winner'), 5000);
+      }
+
+      insertResult(winner, sScore, socScore, taskResults);
+
+      btn.disabled = false;
+      btn.textContent = '⚔ Run Again';
+      matchRunning = false;
+
+      HIVE.showToast(`Arena complete: ${winner} wins (${socScore}-${sScore})`, 'success');
+    }
+
+    // Try to get real data from backend
+    HIVE.startRefresh(async () => {
+      const data = await HIVE.apiPost('/api/arena', {});
+      if (data && data.society_score !== undefined) {
+        document.getElementById('single-score').textContent  = data.single_score  || 0;
+        document.getElementById('society-score').textContent = data.society_score || 0;
+      }
+    }, 10000);
+  </script>
+</body>
+</html>

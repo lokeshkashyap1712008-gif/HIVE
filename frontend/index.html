@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HIVE OS — Autonomous Agent Operating System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* ─── HERO CANVAS ──────────────────────────────────────────── */
+    #hive-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 2;
+    }
+
+    /* ─── ARCHITECTURE DIAGRAM ─────────────────────────────────── */
+    .arch-diagram {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+
+    .arch-box {
+      background: var(--chapel);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--r-lg);
+      padding: var(--sp-5) var(--sp-6);
+      text-align: center;
+      min-width: 120px;
+      position: relative;
+    }
+
+    .arch-box.hive-core {
+      border-color: var(--blood);
+      box-shadow: 0 0 30px rgba(139,0,0,0.2);
+    }
+
+    .arch-box.forge {
+      border-color: var(--gold);
+      box-shadow: 0 0 20px var(--gold-glow);
+    }
+
+    .arch-box.cleanup {
+      border-color: var(--error);
+      box-shadow: 0 0 20px rgba(196,30,58,0.15);
+    }
+
+    .arch-box.worker {
+      border-color: var(--border-bright);
+      padding: var(--sp-3) var(--sp-4);
+      min-width: 90px;
+    }
+
+    .arch-box-label {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--ash);
+      margin-bottom: var(--sp-1);
+    }
+
+    .arch-box-name {
+      font-family: var(--font-heading);
+      font-size: 0.75rem;
+      color: var(--white);
+    }
+
+    .arch-arrow {
+      font-size: 1.5rem;
+      color: var(--pews);
+      padding: 0 var(--sp-2);
+    }
+
+    .arch-workers {
+      display: flex;
+      gap: var(--sp-2);
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .arch-level {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+    }
+
+    /* ─── FEATURE CARDS ─────────────────────────────────────────── */
+    .feat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--r-lg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      margin-bottom: var(--sp-4);
+    }
+
+    .feat-title {
+      font-family: var(--font-heading);
+      font-size: 1.1rem;
+      color: var(--white);
+      margin-bottom: var(--sp-2);
+    }
+
+    .feat-desc {
+      font-size: 0.875rem;
+      color: var(--dust);
+      line-height: 1.6;
+    }
+
+    /* ─── DEMO TERMINAL ─────────────────────────────────────────── */
+    .demo-terminal {
+      background: var(--void);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--r-xl);
+      overflow: hidden;
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .demo-terminal-bar {
+      background: var(--abyss);
+      padding: var(--sp-3) var(--sp-5);
+      display: flex;
+      align-items: center;
+      gap: var(--sp-3);
+      border-bottom: 1px solid var(--border-dim);
+    }
+
+    .demo-terminal-body {
+      padding: var(--sp-5);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      min-height: 200px;
+      color: var(--green);
+      line-height: 1.8;
+    }
+
+    .demo-line { margin-bottom: var(--sp-1); }
+    .demo-prompt { color: var(--blood); }
+    .demo-cmd { color: var(--white); }
+    .demo-out { color: var(--green); }
+    .demo-err { color: var(--error); }
+    .demo-comment { color: var(--gold-muted); }
+    .demo-blur { filter: blur(4px); user-select: none; }
+
+    .demo-input-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+      margin-top: var(--sp-3);
+    }
+
+    .demo-input-row .prompt { color: var(--blood); }
+    .demo-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--green);
+      color: var(--green);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      outline: none;
+      padding: var(--sp-1) 0;
+    }
+
+    /* ─── HOW IT WORKS ─────────────────────────────────────────── */
+    .step {
+      display: flex;
+      gap: var(--sp-6);
+      align-items: flex-start;
+    }
+
+    .step-num {
+      font-family: var(--font-pixel);
+      font-size: 0.625rem;
+      color: var(--blood);
+      background: rgba(139,0,0,0.1);
+      border: 1px solid rgba(139,0,0,0.3);
+      width: 32px;
+      height: 32px;
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .step-content h4 {
+      font-family: var(--font-heading);
+      font-size: 1rem;
+      color: var(--white);
+      margin-bottom: var(--sp-1);
+    }
+
+    .step-content p {
+      font-size: 0.875rem;
+      color: var(--dust);
+      margin: 0;
+    }
+
+    /* ─── CTA BANNER ──────────────────────────────────────────── */
+    .cta-banner {
+      background: var(--chapel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-xl);
+      padding: var(--sp-12) var(--sp-8);
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-banner::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 80% at 50% 50%, rgba(139,0,0,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .cta-banner h2 {
+      font-size: 2rem;
+      margin-bottom: var(--sp-4);
+      position: relative;
+    }
+
+    .cta-banner p {
+      color: var(--dust);
+      max-width: 500px;
+      margin: 0 auto var(--sp-8);
+      position: relative;
+    }
+
+    /* ─── STAT STRIP ──────────────────────────────────────────── */
+    .stat-strip {
+      display: flex;
+      gap: var(--sp-1);
+      background: var(--chapel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-xl);
+      overflow: hidden;
+    }
+
+    .stat-item {
+      flex: 1;
+      padding: var(--sp-6) var(--sp-4);
+      text-align: center;
+      border-right: 1px solid var(--border-dim);
+    }
+
+    .stat-item:last-child { border-right: none; }
+
+    .stat-val {
+      font-family: var(--font-mono);
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--white);
+    }
+
+    .stat-val.green { color: var(--green); text-shadow: 0 0 20px rgba(0,255,65,0.3); }
+    .stat-val.gold  { color: var(--gold); text-shadow: 0 0 20px var(--gold-glow); }
+    .stat-val.blood { color: var(--blood); text-shadow: 0 0 20px var(--blood-glow); }
+    .stat-val.purple{ color: var(--purple); text-shadow: 0 0 20px rgba(157,78,221,0.3); }
+
+    .stat-lbl {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      color: var(--ash);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: var(--sp-1);
+    }
+  </style>
+</head>
+<body class="crt">
+  <!-- ═══ NAVIGATION ═══════════════════════════════════════════════ -->
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"   class="nav-link active">Home</a>
+      <a href="terminal.html"   class="nav-link">Terminal</a>
+      <a href="dashboard.html"  class="nav-link">Dashboard</a>
+      <a href="arena.html"      class="nav-link">Arena</a>
+      <a href="agents.html"     class="nav-link">Agents</a>
+      <a href="economy.html"    class="nav-link">Economy</a>
+      <a href="tasks.html"      class="nav-link">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link">Benchmarks</a>
+    </div>
+    <div class="nav-status">
+      <div class="status-dot"></div>
+      <span id="nav-status-text">initializing</span>
+    </div>
+  </nav>
+
+  <!-- ═══ HERO ════════════════════════════════════════════════════ -->
+  <section class="hero" style="padding-bottom: var(--sp-12);">
+    <canvas id="hive-canvas"></canvas>
+    <div class="hero-bg"></div>
+
+    <div class="hero-inner">
+      <p class="mono-label" style="margin-bottom:var(--sp-3); font-size:0.75rem; color:var(--purple); letter-spacing:0.15em; animation:fadeSlideIn 0.5s ease-out">
+        <span style="color:var(--ash)">v2.0 //</span> AUTONOMOUS MULTI-AGENT OPERATING SYSTEM
+      </p>
+
+      <div class="hero-logo">HIVE<span style="color:var(--gold)">OS</span></div>
+
+      <p class="hero-tagline">
+        An operating system where <em>autonomous AI agents</em> form temporary societies —<br>
+        coordinating, competing, and completing tasks as a self-governing swarm.
+      </p>
+
+      <div class="hero-cta">
+        <a href="terminal.html" class="btn btn-gothic btn-lg">Launch Terminal</a>
+        <a href="dashboard.html" class="btn btn-terminal btn-lg">View Dashboard</a>
+      </div>
+
+      <div style="margin-top:var(--sp-8); display:flex; gap:var(--sp-3); justify-content:center; flex-wrap:wrap;">
+        <span class="badge badge-online">14 Workers Online</span>
+        <span class="badge badge-gold">Society Economy Active</span>
+        <span class="badge badge-info">Qwen Cloud Ready</span>
+      </div>
+    </div>
+
+    <!-- Stats strip -->
+    <div class="container" style="position:relative; z-index:2; width:100%; max-width:900px; margin-top:var(--sp-12);">
+      <div class="stat-strip animate-fadeIn" style="animation-delay:0.5s">
+        <div class="stat-item">
+          <div class="stat-val green" id="stat-agents">--</div>
+          <div class="stat-lbl">Active Agents</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val gold" id="stat-tasks">--</div>
+          <div class="stat-lbl">Tasks Today</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val blood" id="stat-budget">--</div>
+          <div class="stat-lbl">Budget Used</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val purple" id="stat-efficiency">--</div>
+          <div class="stat-lbl">Efficiency</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FEATURES ════════════════════════════════════════════════ -->
+  <section class="section" style="padding-top:0;">
+    <div class="container">
+      <div class="section-header text-center">
+        <p class="section-label">Capabilities</p>
+        <h2 class="section-title">A Living Swarm.<br>A Real Operating System.</h2>
+        <p class="section-sub" style="margin:0 auto;">
+          HIVE OS isn't just a chatbot. It's a self-organizing agent society with
+          memory, economy, hierarchy, and the ability to spawn, coordinate, and
+          cull its own members.
+        </p>
+      </div>
+
+      <div class="grid-4 stagger">
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(139,0,0,0.15); color:var(--crimson);">⏱</div>
+          <div class="feat-title">Autonomous Execution</div>
+          <p class="feat-desc">Agents execute real tasks on your behalf — web search, code execution, API calls — without asking for permission every step.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(0,255,65,0.1); color:var(--green);">🏛</div>
+          <div class="feat-title">Agent Society</div>
+          <p class="feat-desc">14 specialist workers + creator + cleanup crew. Agents negotiate, compete, and cooperate. The society self-optimizes over time.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(200,168,75,0.12); color:var(--gold);">💰</div>
+          <div class="feat-title">Token Economy</div>
+          <p class="feat-desc">Every agent action costs tokens. Budget management, cost tracking per agent, per-task billing. Autonomous cost control.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(157,78,221,0.15); color:var(--purple);">⚡</div>
+          <div class="feat-title">Dynamic Hierarchy</div>
+          <p class="feat-desc">HiveCore leads. AgentForge spawns workers. CleanupCrew removes the rest. A living chain of command that adapts to workload.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(0,180,216,0.12); color:var(--cyan);">🌐</div>
+          <div class="feat-title">Cloud & Local</div>
+          <p class="feat-desc">Runs on your machine or in the cloud. Qwen Cloud for inference. Local Ollama for privacy. Seamlessly switches between them.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(57,255,20,0.1); color:var(--lime);">📊</div>
+          <div class="feat-title">Live Dashboard</div>
+          <p class="feat-desc">Watch every agent in real-time. Their state, emotion, active task, cost, and reasoning — all visible, all live updating.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(247,37,133,0.1); color:var(--magenta);">🎯</div>
+          <div class="feat-title">Arena Benchmarking</div>
+          <p class="feat-desc">Single agent vs. full society. Run head-to-head comparisons. See exactly when swarm intelligence beats solo effort.</p>
+        </div>
+
+        <div class="card animate-slideUp" style="cursor:default;">
+          <div class="feat-icon" style="background:rgba(255,204,0,0.1); color:var(--warning);">🧠</div>
+          <div class="feat-title">Emotional Intelligence</div>
+          <p class="feat-desc">Agents track emotions — confident, stressed, curious, excited. Emotional state affects task behavior and inter-agent dynamics.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ ARCHITECTURE ═════════════════════════════════════════════ -->
+  <section class="section">
+    <div class="container">
+      <div class="section-header text-center">
+        <p class="section-label">Architecture</p>
+        <h2 class="section-title">Chain of Command</h2>
+        <p class="section-sub" style="margin:0 auto;">
+          Three core agents govern the swarm. Each has a distinct role, budget, and set of permissions.
+          The hierarchy is flat enough to be fast and deep enough to be safe.
+        </p>
+      </div>
+
+      <div style="display:flex; flex-direction:column; align-items:center; gap:var(--sp-8); margin-top:var(--sp-8);">
+
+        <!-- L1: HiveCore -->
+        <div class="arch-diagram animate-scaleIn" style="animation-delay:0.2s">
+          <div class="arch-box hive-core">
+            <div class="arch-box-label">Core Agent</div>
+            <div style="font-family:var(--font-display); font-size:1.1rem; color:var(--blood); margin-bottom:2px;">HIVE CORE</div>
+            <div style="font-size:0.7rem; color:var(--ash);">Leader / Coordinator</div>
+          </div>
+        </div>
+
+        <!-- L2: Arrows + Forge / Cleanup -->
+        <div style="display:flex; align-items:center; gap:var(--sp-6); flex-wrap:wrap; justify-content:center;" class="animate-scaleIn" style="animation-delay:0.4s">
+          <div style="display:flex; flex-direction:column; align-items:center; gap:var(--sp-2);">
+            <div style="font-size:1.5rem; color:var(--blood);">↓</div>
+            <div style="font-family:var(--font-pixel); font-size:0.5rem; color:var(--ash);">SPAWNS</div>
+          </div>
+          <div class="arch-box forge">
+            <div class="arch-box-label">Creator</div>
+            <div style="font-family:var(--font-heading); color:var(--gold); margin-bottom:2px;">AGENT FORGE</div>
+            <div style="font-size:0.7rem; color:var(--ash);">Spawns Workers</div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; align-items:center; gap:var(--sp-2);">
+            <div style="font-size:1.5rem; color:var(--blood);">↓</div>
+            <div style="font-family:var(--font-pixel); font-size:0.5rem; color:var(--ash);">CULLS</div>
+          </div>
+
+          <div class="arch-box cleanup">
+            <div class="arch-box-label">Destructor</div>
+            <div style="font-family:var(--font-heading); color:var(--error); margin-bottom:2px;">CLEANUP CREW</div>
+            <div style="font-size:0.7rem; color:var(--ash);">Removes Agents</div>
+          </div>
+        </div>
+
+        <!-- L3: Workers -->
+        <div style="display:flex; flex-direction:column; align-items:center; gap:var(--sp-3);" class="animate-scaleIn" style="animation-delay:0.6s">
+          <div style="font-family:var(--font-pixel); font-size:0.5rem; color:var(--ash);">14 WORKER AGENTS</div>
+          <div class="arch-arrow" style="font-size:1rem; color:var(--border-bright);">↓</div>
+          <div class="arch-workers">
+            <div class="arch-box worker"><div class="arch-box-name">Web Scout</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Code Runner</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Diagnostician</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Report Agent</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Data Analyst</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Payment Agent</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Scheduler</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Security Scout</div></div>
+          </div>
+          <div class="arch-workers" style="margin-top:var(--sp-2);">
+            <div class="arch-box worker"><div class="arch-box-name">GPU Tuner</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Code Architect</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Red Team</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Account Mgr</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Cloud Tester</div></div>
+            <div class="arch-box worker"><div class="arch-box-name">Communicator</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- How it works -->
+      <div style="margin-top:var(--sp-16); max-width:700px; margin-left:auto; margin-right:auto;">
+        <p class="section-label" style="justify-content:center; margin-bottom:var(--sp-8);">Lifecycle</p>
+
+        <div style="display:flex; flex-direction:column; gap:var(--sp-6);">
+          <div class="step animate-slideUp">
+            <div class="step-num">01</div>
+            <div class="step-content">
+              <h4>You submit a task</h4>
+              <p>Any natural-language task enters through the terminal or API. The HiveCore leader receives it and dissects it into sub-tasks.</p>
+            </div>
+          </div>
+          <div class="step animate-slideUp">
+            <div class="step-num">02</div>
+            <div class="step-content">
+              <h4>Society decides the approach</h4>
+              <p>Agents negotiate roles. The Forge spawns specialists. Cleanup Crew pre-emptively removes idle agents to save budget.</p>
+            </div>
+          </div>
+          <div class="step animate-slideUp">
+            <div class="step-num">03</div>
+            <div class="step-content">
+              <h4>Agents execute in parallel</h4>
+              <p>Workers run sub-tasks. Each action costs tokens from the shared economy. HiveCore monitors progress in real-time.</p>
+            </div>
+          </div>
+          <div class="step animate-slideUp">
+            <div class="step-num">04</div>
+            <div class="step-content">
+              <h4>Results merge and report</h4>
+              <p>Outputs flow back to HiveCore → Report Agent compiles → You receive a unified result. Cleanup Crew removes finished agents.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ LIVE DEMO ════════════════════════════════════════════════ -->
+  <section class="section" style="background:var(--chapel); border-top:1px solid var(--border-dim); border-bottom:1px solid var(--border-dim);">
+    <div class="container">
+      <div class="section-header text-center">
+        <p class="section-label">Live Demo</p>
+        <h2 class="section-title">See the Swarm in Action</h2>
+      </div>
+
+      <div class="demo-terminal" id="demo-terminal">
+        <div class="demo-terminal-bar">
+          <div class="terminal-dots">
+            <div class="terminal-dot r"></div>
+            <div class="terminal-dot y"></div>
+            <div class="terminal-dot g"></div>
+          </div>
+          <div class="terminal-title">HIVE OS — TERMINAL</div>
+          <span class="badge badge-online" style="font-size:0.4rem;">LIVE</span>
+        </div>
+        <div class="demo-terminal-body" id="demo-body">
+          <div class="demo-line"><span class="demo-comment"># HIVE OS v2.0 — Autonomous Agent Operating System</span></div>
+          <div class="demo-line"><span class="demo-comment"># (Demo mode — connect backend for live execution)</span></div>
+          <div class="demo-line">&nbsp;</div>
+          <div class="demo-line"><span class="demo-prompt">[HiveCore]</span> <span class="demo-out">Society initialized. 14 workers online.</span></div>
+          <div class="demo-line"><span class="demo-prompt">[HiveCore]</span> <span class="demo-out">Budget: 9500 / 10000 tokens</span></div>
+          <div class="demo-line"><span class="demo-prompt">[HiveCore]</span> <span class="demo-out">Model: qwen2.5:7b (DashScope)</span></div>
+          <div class="demo-line">&nbsp;</div>
+          <div class="demo-line"><span class="demo-prompt">$</span> <span class="demo-cmd" id="demo-cmd-1">analyze connectiify.com performance</span></div>
+          <div class="demo-line"><span class="demo-prompt">[Web Scout]</span> <span class="demo-out">Fetching DNS records...</span></div>
+          <div class="demo-line"><span class="demo-prompt">[Diagnostician]</span> <span class="demo-out">Running latency checks: 3 regions...</span></div>
+          <div class="demo-line"><span class="demo-prompt">[Report Agent]</span> <span class="demo-out">Compiling findings...</span></div>
+          <div class="demo-line"><span class="demo-out demo-blur">→ connectiify.com: 847ms avg, TLS cert expires in 42 days</span></div>
+          <div class="demo-line"><span class="demo-out demo-blur">→ DNS propagation: OK | CDN: Cloudflare detected</span></div>
+          <div class="demo-line">&nbsp;</div>
+          <div class="demo-line"><span class="demo-prompt">$</span> <span class="demo-cmd">_</span></div>
+          <div class="demo-input-row">
+            <span class="prompt">$</span>
+            <input class="demo-input" id="demo-input" placeholder="Type a command..." onclick="this.value='analyze connectiify.com'">
+            <span class="badge badge-info" style="font-size:0.4rem;">Qwen Cloud</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center; margin-top:var(--sp-6);">
+        <a href="terminal.html" class="btn btn-gothic">Open Full Terminal</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CTA BANNER ═══════════════════════════════════════════════ -->
+  <section class="section">
+    <div class="container">
+      <div class="cta-banner animate-glow">
+        <p class="section-label" style="justify-content:center;">Ready to deploy?</p>
+        <h2>Your Swarm is Waiting</h2>
+        <p>Start the backend and take control of your autonomous agent society.</p>
+        <div style="display:flex; gap:var(--sp-4); justify-content:center; flex-wrap:wrap; position:relative;">
+          <a href="terminal.html" class="btn btn-gothic btn-lg">Launch Terminal</a>
+          <a href="dashboard.html" class="btn btn-glass btn-lg">View Dashboard</a>
+          <a href="benchmarks.html" class="btn btn-terminal btn-lg">Run Benchmarks</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══════════════════════════════════════════════════ -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span class="footer-brand">HIVE<span style="color:var(--gold)">OS</span></span>
+      <div class="footer-links">
+        <a href="terminal.html">Terminal</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="agents.html">Agents</a>
+        <a href="economy.html">Economy</a>
+        <a href="benchmarks.html">Benchmarks</a>
+      </div>
+      <span class="footer-copy">HIVE OS v2.0 // Qwen Cloud Hackathon 2026</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+  <script>
+    /* ─── HIVE CANVAS ANIMATION ──────────────────────────────── */
+    (function initCanvas() {
+      const canvas = document.getElementById('hive-canvas');
+      const ctx = canvas.getContext('2d');
+      let W, H, particles = [], mouse = { x: 0, y: 0 };
+
+      function resize() {
+        W = canvas.width  = canvas.offsetWidth;
+        H = canvas.height = canvas.offsetHeight;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      // Hex grid helper
+      function hexPath(cx, cy, r) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 6;
+          const x = cx + r * Math.cos(angle);
+          const y = cy + r * Math.sin(angle);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+      }
+
+      // Particle class
+      class Particle {
+        constructor() {
+          this.reset();
+        }
+        reset() {
+          this.x  = Math.random() * W;
+          this.y  = Math.random() * H;
+          this.vx = (Math.random() - 0.5) * 0.4;
+          this.vy = (Math.random() - 0.5) * 0.4;
+          this.r  = Math.random() * 1.5 + 0.5;
+          this.alpha = Math.random() * 0.5 + 0.2;
+          this.hue   = Math.random() > 0.7 ? 0 : (Math.random() > 0.5 ? 270 : 50); // blood/purple/gold
+        }
+      }
+
+      // Create particles
+      for (let i = 0; i < 120; i++) particles.push(new Particle());
+
+      const COLORS = { 0: '#8b0000', 270: '#9d4edd', 50: '#c8a84b' };
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+
+        // Draw hex grid faintly in background
+        const hexR = 40;
+        const hexW = hexR * Math.sqrt(3);
+        const hexH = hexR * 2;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(157, 78, 221, 0.04)';
+        ctx.lineWidth = 0.5;
+        for (let row = -1; row < H / (hexH * 0.75) + 2; row++) {
+          for (let col = -1; col < W / hexW + 2; col++) {
+            const cx = col * hexW + (row % 2) * hexW * 0.5;
+            const cy = row * hexH * 0.75;
+            hexPath(cx, cy, hexR);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+
+        // Particles
+        for (const p of particles) {
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.x < -20 || p.x > W + 20 || p.y < -20 || p.y > H + 20) p.reset();
+
+          const dist = Math.hypot(p.x - mouse.x, p.y - mouse.y);
+          const nearAlpha = dist < 100 ? p.alpha * 1.5 : p.alpha;
+
+          ctx.save();
+          ctx.globalAlpha = nearAlpha;
+          ctx.fillStyle = COLORS[p.hue];
+          ctx.shadowColor = COLORS[p.hue];
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Connections
+        for (let i = 0; i < particles.length; i++) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const dx = particles[i].x - particles[j].x;
+            const dy = particles[i].y - particles[j].y;
+            const d  = Math.hypot(dx, dy);
+            if (d < 100) {
+              ctx.save();
+              ctx.globalAlpha = (1 - d / 100) * 0.15;
+              ctx.strokeStyle = '#9d4edd';
+              ctx.lineWidth = 0.5;
+              ctx.beginPath();
+              ctx.moveTo(particles[i].x, particles[i].y);
+              ctx.lineTo(particles[j].x, particles[j].y);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+
+        // Mouse connection
+        for (const p of particles) {
+          const d = Math.hypot(p.x - mouse.x, p.y - mouse.y);
+          if (d < 150) {
+            ctx.save();
+            ctx.globalAlpha = (1 - d / 150) * 0.3;
+            ctx.strokeStyle = '#8b0000';
+            ctx.shadowColor = '#8b0000';
+            ctx.shadowBlur = 6;
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(mouse.x, mouse.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
+        requestAnimationFrame(draw);
+      }
+
+      canvas.addEventListener('mousemove', (e) => {
+        mouse.x = e.offsetX;
+        mouse.y = e.offsetY;
+      });
+
+      draw();
+
+      // Demo typing animation
+      const demoCmds = [
+        'analyze connectiify.com performance',
+        'find security vulnerabilities',
+        'generate market research report',
+        'run full benchmark suite',
+      ];
+      let cmdIdx = 0;
+      const cmdEl = document.getElementById('demo-cmd-1');
+      setInterval(() => {
+        if (!cmdEl) return;
+        cmdIdx = (cmdIdx + 1) % demoCmds.length;
+        cmdEl.style.opacity = '0';
+        setTimeout(() => {
+          cmdEl.textContent = demoCmds[cmdIdx];
+          cmdEl.style.opacity = '1';
+        }, 400);
+      }, 4000);
+    })();
+
+    /* ─── LOAD METRICS ─────────────────────────────────────────── */
+    HIVE.startRefresh(async () => {
+      const data = await HIVE.apiGet('/api/metrics');
+      if (!data) {
+        document.getElementById('stat-agents').textContent = '14';
+        document.getElementById('stat-tasks').textContent = '∞';
+        document.getElementById('stat-budget').textContent = '---';
+        document.getElementById('stat-efficiency').textContent = '?';
+        document.getElementById('nav-status-text').textContent = 'offline (start backend)';
+        return;
+      }
+      document.getElementById('nav-status-text').textContent = 'backend online';
+      HIVE.animateCounter(document.getElementById('stat-agents'), data.active_agents || 0);
+      HIVE.animateCounter(document.getElementById('stat-tasks'),  data.tasks_completed || 0);
+      document.getElementById('stat-budget').textContent = data.budget_used !== undefined ? `${data.budget_used}` : '---';
+      document.getElementById('stat-efficiency').textContent = data.efficiency !== undefined ? `${data.efficiency}%` : '?';
+    }, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Queue — HIVE OS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { background: var(--void); }
+    .task-item { background:var(--chapel); border:1px solid var(--border-dim); border-radius:var(--r-lg); padding:var(--sp-4); margin-bottom:var(--sp-3); transition:var(--t-normal); }
+    .task-item:hover { border-color:var(--border-bright); }
+    .task-item-header { display:flex; align-items:center; gap:var(--sp-3); margin-bottom:var(--sp-2); }
+    .task-id { font-family:var(--font-mono); font-size:0.6875rem; color:var(--ash); }
+    .task-desc { font-size:0.9375rem; color:var(--white); flex:1; }
+    .task-meta { display:flex; gap:var(--sp-4); font-family:var(--font-mono); font-size:0.75rem; color:var(--ash); margin-top:var(--sp-2); }
+    .submit-form { background:var(--chapel); border:1px solid var(--border-dim); border-radius:var(--r-xl); padding:var(--sp-6); margin-bottom:var(--sp-6); }
+  </style>
+</head>
+<body class="crt">
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"       class="nav-link">Home</a>
+      <a href="terminal.html"    class="nav-link">Terminal</a>
+      <a href="dashboard.html"   class="nav-link">Dashboard</a>
+      <a href="arena.html"       class="nav-link">Arena</a>
+      <a href="agents.html"      class="nav-link">Agents</a>
+      <a href="economy.html"      class="nav-link">Economy</a>
+      <a href="tasks.html"       class="nav-link active">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link">Benchmarks</a>
+    </div>
+    <div class="nav-status"><div class="status-dot"></div><span id="nav-status-text">initializing</span></div>
+  </nav>
+
+  <div class="page">
+    <div class="container" style="padding-top:var(--sp-8);">
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-6);">
+        <div>
+          <h1 style="font-size:1.75rem;">Task Queue</h1>
+          <p style="color:var(--ash); font-size:0.875rem; margin:0;">Submit, track, and audit tasks</p>
+        </div>
+        <div style="display:flex; gap:var(--sp-3);">
+          <span class="badge badge-info" id="task-count">-- pending</span>
+          <button class="btn btn-gothic btn-sm" onclick="document.getElementById('submit-form').style.display='block'">+ Submit Task</button>
+        </div>
+      </div>
+
+      <!-- Submit form -->
+      <div class="submit-form" id="submit-form" style="display:none;">
+        <h3 style="font-size:1rem; margin-bottom:var(--sp-4);">Submit New Task</h3>
+        <div style="display:flex; gap:var(--sp-4); align-items:flex-end;">
+          <div style="flex:1;">
+            <label>Task Description</label>
+            <textarea class="input" id="task-desc" rows="3" placeholder="Describe the task... e.g. 'Analyze connectiify.com and find 3 security issues'"></textarea>
+          </div>
+          <div>
+            <button class="btn btn-gothic" onclick="submitTask()">Submit</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('submit-form').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('pending', this)">Pending</button>
+        <button class="tab-btn" onclick="switchTab('running', this)">Running</button>
+        <button class="tab-btn" onclick="switchTab('completed', this)">Completed</button>
+        <button class="tab-btn" onclick="switchTab('audit', this)">Audit Log</button>
+      </div>
+
+      <div id="tab-pending"  class="tab-content active">
+        <div id="pending-list" class="mt-4"><div class="empty-state"><div class="spinner" style="margin:0 auto;"></div></div></div>
+      </div>
+      <div id="tab-running"   class="tab-content"><div id="running-list"  class="mt-4"></div></div>
+      <div id="tab-completed" class="tab-content"><div id="completed-list" class="mt-4"></div></div>
+      <div id="tab-audit"     class="tab-content">
+        <div id="audit-list" class="mt-4" style="max-height:600px; overflow-y:auto;"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    let currentTab = 'pending';
+
+    function switchTab(tab, btn) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + tab).classList.add('active');
+    }
+
+    function taskCard(t) {
+      const agent  = t.agent  || 'HiveCore';
+      const status = t.status || 'pending';
+      const badge  = status === 'completed' ? 'badge-online' : status === 'running' ? 'badge-gold' : status === 'error' ? 'badge-error' : 'badge-offline';
+      const when   = t.created_at ? timeAgo(t.created_at) : 'just now';
+      return `<div class="task-item">
+        <div class="task-item-header">
+          <span class="task-id">#${(t.id || '?').slice(-6)}</span>
+          <span class="task-desc">${t.description || t.task || 'No description'}</span>
+          <span class="badge ${badge}">${status}</span>
+        </div>
+        <div class="task-meta">
+          <span>👤 ${agent}</span>
+          <span>⏱ ${when}</span>
+          ${t.cost ? `<span>💰 $${t.cost}</span>` : ''}
+          ${t.result ? `<span>✓ ${(t.result||'').slice(0,40)}...</span>` : ''}
+        </div>
+      </div>`;
+    }
+
+    async function loadTasks() {
+      const data = await HIVE.apiGet('/api/tasks');
+      document.getElementById('nav-status-text').textContent = data ? 'online' : 'demo mode';
+
+      const pending   = data?.pending   || [];
+      const running   = data?.running   || [];
+      const completed = data?.completed || [];
+      const audit     = data?.audit     || [];
+
+      const pendingCount = pending.length + running.length;
+      document.getElementById('task-count').textContent = `${pendingCount} pending`;
+
+      // Demo fallback
+      if (!data) {
+        const demo = {
+          pending: [
+            { id:'task001', description:'Analyze connectiify.com performance metrics', agent:'WebScout', status:'pending', created_at:Date.now()/1000-120 },
+            { id:'task002', description:'Find security vulnerabilities in authentication flow', agent:'SecurityScout', status:'pending', created_at:Date.now()/1000-90 },
+            { id:'task003', description:'Generate Q2 performance report', agent:'ReportAgent', status:'pending', created_at:Date.now()/1000-60 },
+          ],
+          running: [
+            { id:'task004', description:'Running full system diagnostics', agent:'Diagnostician', status:'running', created_at:Date.now()/1000-30, cost:8 },
+          ],
+          completed: [
+            { id:'task005', description:'Cloud deployment verification', agent:'CloudTester', status:'completed', created_at:Date.now()/1000-300, cost:7, result:'All checks passed' },
+            { id:'task006', description:'GPU optimization run', agent:'GPUtuner', status:'completed', created_at:Date.now()/1000-600, cost:30, result:'512MB VRAM freed' },
+            { id:'task007', description:'Code architecture review', agent:'CodeArchitect', status:'completed', created_at:Date.now()/1000-900, cost:35, result:'Architecture approved' },
+          ],
+        };
+        renderTab('pending',   demo.pending);
+        renderTab('running',   demo.running);
+        renderTab('completed', demo.completed);
+        renderAudit([...demo.completed, ...demo.pending, ...demo.running]);
+        return;
+      }
+
+      renderTab('pending',   pending);
+      renderTab('running',   running);
+      renderTab('completed', completed.slice(0, 50));
+      renderAudit([...audit]);
+    }
+
+    function renderTab(tab, items) {
+      const el = document.getElementById(tab + '-list');
+      if (!el) return;
+      if (items.length === 0) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📋</div><h3>No ${tab} tasks</h3><p>Tasks will appear here when submitted.</p></div>`;
+      } else {
+        el.innerHTML = items.map(taskCard).join('');
+      }
+    }
+
+    function renderAudit(items) {
+      const el = document.getElementById('audit-list');
+      if (!el) return;
+      el.innerHTML = items.slice(0, 100).map(t => `
+        <div class="task-item">
+          <div class="task-item-header">
+            <span class="task-id">#${(t.id||'?').slice(-6)}</span>
+            <span class="task-desc">${t.description||t.task||'—'}</span>
+            <span class="badge ${t.status==='completed'?'badge-online':t.status==='error'?'badge-error':'badge-offline'}">${t.status}</span>
+          </div>
+          <div class="task-meta">
+            <span>👤 ${t.agent||'—'}</span>
+            <span>⏱ ${timeAgo(t.created_at||0)}</span>
+            ${t.cost ? `<span>💰 $${t.cost}` : ''}
+            ${t.duration ? `<span>⏱ ${t.duration.toFixed(1)}s</span>` : ''}
+          </div>
+        </div>`).join('');
+    }
+
+    function timeAgo(ts) {
+      const d = Date.now()/1000 - ts;
+      if (d < 60) return `${Math.round(d)}s ago`;
+      if (d < 3600) return `${Math.round(d/60)}m ago`;
+      if (d < 86400) return `${Math.round(d/3600)}h ago`;
+      return `${Math.round(d/86400)}d ago`;
+    }
+
+    async function submitTask() {
+      const desc = document.getElementById('task-desc').value.trim();
+      if (!desc) { HIVE.showToast('Enter a task description', 'warning'); return; }
+      const data = await HIVE.apiPost('/api/tasks/sync', { description: desc });
+      if (data) {
+        HIVE.showToast(`Task submitted: ${data.task_id || data.id || 'queued'}`, 'success');
+        document.getElementById('submit-form').style.display = 'none';
+        document.getElementById('task-desc').value = '';
+        setTimeout(loadTasks, 500);
+      } else {
+        HIVE.showToast('Backend offline. Task queued locally.', 'warning');
+        // Demo fallback — add to pending
+        const demo = { id:'task_'+Date.now(), description:desc, agent:'HiveCore', status:'pending', created_at:Date.now()/1000 };
+        const el = document.getElementById('pending-list');
+        el.innerHTML = taskCard(demo) + el.innerHTML;
+        document.getElementById('submit-form').style.display = 'none';
+      }
+    }
+
+    loadTasks();
+    HIVE.startRefresh(loadTasks, 5000);
+  </script>
+</body>
+</html>

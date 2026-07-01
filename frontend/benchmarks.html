@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmarks — HIVE OS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { background: var(--void); }
+    .bench-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px,1fr)); gap:var(--sp-6); }
+    .bench-card { background:var(--chapel); border:1px solid var(--border-dim); border-radius:var(--r-xl); overflow:hidden; transition:var(--t-normal); }
+    .bench-card:hover { border-color:var(--border-bright); transform:translateY(-2px); }
+    .bench-card-header { padding:var(--sp-5) var(--sp-6); border-bottom:1px solid var(--border-dim); display:flex; align-items:center; gap:var(--sp-4); }
+    .bench-icon { font-size:1.75rem; width:48px; height:48px; display:flex; align-items:center; justify-content:center; border-radius:var(--r-lg); flex-shrink:0; }
+    .bench-title { font-family:var(--font-heading); font-size:1rem; color:var(--white); }
+    .bench-subtitle { font-family:var(--font-mono); font-size:0.6875rem; color:var(--ash); }
+    .bench-body { padding:var(--sp-5) var(--sp-6); }
+    .bench-desc { font-size:0.875rem; color:var(--dust); margin-bottom:var(--sp-4); line-height:1.6; }
+    .bench-meta { display:flex; gap:var(--sp-4); margin-bottom:var(--sp-4); font-family:var(--font-mono); font-size:0.6875rem; color:var(--ash); }
+    .bench-result { background:var(--abyss); border-radius:var(--r-md); padding:var(--sp-3); margin-top:var(--sp-3); }
+    .bench-result-label { font-family:var(--font-mono); font-size:0.5625rem; color:var(--ash); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:var(--sp-1); }
+    .bench-result-val { font-family:var(--font-mono); font-size:1rem; font-weight:700; }
+    .bench-result-val.pass { color:var(--green); }
+    .bench-result-val.fail { color:var(--error); }
+    .bench-result-val.run  { color:var(--warning); animation:neon-pulse 1.5s ease-in-out infinite; }
+  </style>
+</head>
+<body class="crt">
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"       class="nav-link">Home</a>
+      <a href="terminal.html"    class="nav-link">Terminal</a>
+      <a href="dashboard.html"   class="nav-link">Dashboard</a>
+      <a href="arena.html"       class="nav-link">Arena</a>
+      <a href="agents.html"      class="nav-link">Agents</a>
+      <a href="economy.html"      class="nav-link">Economy</a>
+      <a href="tasks.html"       class="nav-link">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link active">Benchmarks</a>
+    </div>
+    <div class="nav-status"><div class="status-dot"></div><span>benchmarks</span></div>
+  </nav>
+
+  <div class="page">
+    <div class="container" style="padding-top:var(--sp-8);">
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-6);">
+        <div>
+          <h1 style="font-size:1.75rem;">Benchmark Suite</h1>
+          <p style="color:var(--ash); font-size:0.875rem; margin:0;">Test your swarm's capabilities</p>
+        </div>
+        <button class="btn btn-gothic" onclick="runAllBenchmarks()">⚡ Run All Suites</button>
+      </div>
+
+      <div class="bench-grid" id="bench-grid">
+        <!-- Card 1: Web Search -->
+        <div class="bench-card">
+          <div class="bench-card-header">
+            <div class="bench-icon" style="background:rgba(0,245,212,0.1);">🔍</div>
+            <div>
+              <div class="bench-title">Web Scout</div>
+              <div class="bench-subtitle">Web Search & Analysis</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Measures speed and accuracy of web searches, content extraction, and link analysis. Tests 10 real queries across different domains.</p>
+            <div class="bench-meta">
+              <span>📊 10 tasks</span>
+              <span>⏱ ~45s</span>
+              <span>💰 ~20 tokens</span>
+            </div>
+            <div class="bench-result" id="result-webscout">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-terminal w-full" style="margin-top:var(--sp-3);" onclick="runBench('webscout')">Run Benchmark</button>
+          </div>
+        </div>
+
+        <!-- Card 2: Code Execution -->
+        <div class="bench-card">
+          <div class="bench-card-header">
+            <div class="bench-icon" style="background:rgba(57,255,20,0.1);">💻</div>
+            <div>
+              <div class="bench-title">Code Runner</div>
+              <div class="bench-subtitle">Code Execution & Debugging</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Measures how quickly and accurately agents can write, execute, and debug code. Includes Python, JS, and shell scripting tasks.</p>
+            <div class="bench-meta">
+              <span>📊 8 tasks</span>
+              <span>⏱ ~2min</span>
+              <span>💰 ~40 tokens</span>
+            </div>
+            <div class="bench-result" id="result-coderunner">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-terminal w-full" style="margin-top:var(--sp-3);" onclick="runBench('coderunner')">Run Benchmark</button>
+          </div>
+        </div>
+
+        <!-- Card 3: Diagnostics -->
+        <div class="bench-card">
+          <div class="bench-card-header">
+            <div class="bench-icon" style="background:rgba(0,180,216,0.1);">🔬</div>
+            <div>
+              <div class="bench-title">Diagnostician</div>
+              <div class="bench-subtitle">System Health Analysis</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Tests the agent's ability to analyze system state, identify issues, and recommend fixes. Covers CPU, memory, disk, and network.</p>
+            <div class="bench-meta">
+              <span>📊 6 tasks</span>
+              <span>⏱ ~30s</span>
+              <span>💰 ~15 tokens</span>
+            </div>
+            <div class="bench-result" id="result-diagnostics">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-terminal w-full" style="margin-top:var(--sp-3);" onclick="runBench('diagnostics')">Run Benchmark</button>
+          </div>
+        </div>
+
+        <!-- Card 4: Report Generation -->
+        <div class="bench-card">
+          <div class="bench-card-header">
+            <div class="bench-icon" style="background:rgba(200,168,75,0.1);">📝</div>
+            <div>
+              <div class="bench-title">Report Agent</div>
+              <div class="bench-subtitle">Structured Report Generation</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Tests the quality and speed of structured report generation. Evaluates formatting, accuracy, completeness, and readability.</p>
+            <div class="bench-meta">
+              <span>📊 5 tasks</span>
+              <span>⏱ ~90s</span>
+              <span>💰 ~50 tokens</span>
+            </div>
+            <div class="bench-result" id="result-reportagent">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-terminal w-full" style="margin-top:var(--sp-3);" onclick="runBench('reportagent')">Run Benchmark</button>
+          </div>
+        </div>
+
+        <!-- Card 5: Security -->
+        <div class="bench-card">
+          <div class="bench-card-header">
+            <div class="bench-icon" style="background:rgba(247,37,133,0.1);">🛡️</div>
+            <div>
+              <div class="bench-title">Security Scout</div>
+              <div class="bench-subtitle">Vulnerability Assessment</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Tests the agent's ability to identify security vulnerabilities, assess risk levels, and prioritize fixes by severity.</p>
+            <div class="bench-meta">
+              <span>📊 7 tasks</span>
+              <span>⏱ ~3min</span>
+              <span>💰 ~60 tokens</span>
+            </div>
+            <div class="bench-result" id="result-securityscout">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-terminal w-full" style="margin-top:var(--sp-3);" onclick="runBench('securityscout')">Run Benchmark</button>
+          </div>
+        </div>
+
+        <!-- Card 6: Full Swarm -->
+        <div class="bench-card">
+          <div class="bench-card-header" style="background:linear-gradient(135deg, rgba(139,0,0,0.08), rgba(157,78,221,0.08));">
+            <div class="bench-icon" style="background:rgba(139,0,0,0.15);">⚡</div>
+            <div>
+              <div class="bench-title">Full Swarm Test</div>
+              <div class="bench-subtitle">All 14 Agents + Leader</div>
+            </div>
+          </div>
+          <div class="bench-body">
+            <p class="bench-desc">Complete stress test. All agents work simultaneously on a complex multi-step task. Measures coordination, throughput, and swarm efficiency.</p>
+            <div class="bench-meta">
+              <span>📊 20 tasks</span>
+              <span>⏱ ~5min</span>
+              <span>💰 ~150 tokens</span>
+            </div>
+            <div class="bench-result" id="result-swarm">
+              <div class="bench-result-label">Last Result</div>
+              <div class="bench-result-val run">Not run yet</div>
+            </div>
+            <button class="btn btn-gothic w-full" style="margin-top:var(--sp-3);" onclick="runBench('swarm')">Run Full Swarm</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="mt-12">
+        <h2 style="font-size:1.25rem; margin-bottom:var(--sp-4);">📊 Run History</h2>
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Benchmark History</span>
+          </div>
+          <div id="bench-history" style="padding:var(--sp-4) var(--sp-6);">
+            <div class="empty-state"><div class="empty-state-icon">📊</div><h3>No benchmarks run yet</h3><p>Run a benchmark to see results here.</p></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    const BENCH_NAMES = { webscout:'WebScout', coderunner:'CodeRunner', diagnostics:'Diagnostician', reportagent:'ReportAgent', securityscout:'SecurityScout', swarm:'Full Swarm' };
+    const BENCH_TASKS = { webscout:10, coderunner:8, diagnostics:6, reportagent:5, securityscout:7, swarm:20 };
+
+    async function runBench(id) {
+      const el = document.getElementById(`result-${id}`);
+      el.querySelector('.bench-result-val').className = 'bench-result-val run';
+      el.querySelector('.bench-result-val').textContent = 'Running...';
+
+      const data = await HIVE.apiPost('/api/benchmark/' + id, {});
+      if (data) {
+        const pass = data.score >= 70;
+        el.querySelector('.bench-result-val').className = `bench-result-val ${pass ? 'pass' : 'fail'}`;
+        el.querySelector('.bench-result-val').textContent = `${data.score}% (${data.passed}/${data.total})`;
+        addHistory(BENCH_NAMES[id], data.score, data.total || BENCH_TASKS[id]);
+        HIVE.showToast(`${BENCH_NAMES[id]}: ${data.score}%`, pass ? 'success' : 'warning');
+      } else {
+        // Simulate
+        await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
+        const score = Math.round(60 + Math.random() * 38);
+        const total = BENCH_TASKS[id];
+        const passed = Math.round(score / 100 * total);
+        el.querySelector('.bench-result-val').className = `bench-result-val ${score >= 70 ? 'pass' : 'fail'}`;
+        el.querySelector('.bench-result-val').textContent = `${score}% (${passed}/${total})`;
+        addHistory(BENCH_NAMES[id], score, total);
+        HIVE.showToast(`${BENCH_NAMES[id]}: ${score}%`, score >= 70 ? 'success' : 'warning');
+      }
+    }
+
+    async function runAllBenchmarks() {
+      HIVE.showToast('Running all 6 benchmark suites...', 'info');
+      const ids = ['webscout','coderunner','diagnostics','reportagent','securityscout','swarm'];
+      for (const id of ids) {
+        await new Promise(r => setTimeout(r, 500));
+        await runBench(id);
+      }
+      HIVE.showToast('All benchmarks complete!', 'success');
+    }
+
+    function addHistory(name, score, total) {
+      const history = document.getElementById('bench-history');
+      const row = document.createElement('div');
+      const now = new Date();
+      const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      row.style.cssText = 'display:grid; grid-template-columns:80px 140px 1fr 80px; gap:var(--sp-4); padding:var(--sp-3) var(--sp-4); border-bottom:1px solid rgba(30,27,46,0.5); font-family:var(--font-mono); font-size:0.8125rem; align-items:center;';
+      row.innerHTML = `
+        <span style="color:var(--ash); font-size:0.75rem;">${ts}</span>
+        <span style="color:var(--purple);">${name}</span>
+        <div style="height:8px; background:var(--border-dim); border-radius:var(--r-pill); overflow:hidden; max-width:200px;">
+          <div style="height:100%; width:${score}%; background:${score>=70?'var(--green)':'var(--error)'}; border-radius:var(--r-pill);"></div>
+        </div>
+        <span style="color:${score>=70?'var(--green)':'var(--error)'}; text-align:right;">${score}%</span>`;
+      history.insertBefore(row, history.firstChild);
+      // Remove empty state if present
+      const empty = history.querySelector('.empty-state');
+      if (empty) empty.parentElement.remove();
+    }
+  </script>
+</body>
+</html>

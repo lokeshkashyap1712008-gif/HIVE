@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HIVE Terminal — HIVE OS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { background: var(--void); }
+
+    .terminal-page {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .terminal-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 80px var(--sp-6) var(--sp-4);
+      min-height: 0;
+    }
+
+    .terminal-window {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--abyss);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--r-xl) var(--r-xl) 0 0;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .terminal-titlebar {
+      background: var(--chapel);
+      padding: var(--sp-3) var(--sp-5);
+      display: flex;
+      align-items: center;
+      gap: var(--sp-4);
+      border-bottom: 1px solid var(--border-dim);
+      flex-shrink: 0;
+    }
+
+    .terminal-titlebar-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .terminal-titlebar-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-titlebar-title {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--ash);
+      text-align: center;
+      letter-spacing: 0.1em;
+    }
+
+    .terminal-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--sp-4) var(--sp-5);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-height: 0;
+    }
+
+    .t-line {
+      display: flex;
+      gap: var(--sp-3);
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      animation: fadeSlideIn 0.1s ease-out;
+    }
+
+    .t-ts     { color: var(--ash); font-size: 0.6875rem; flex-shrink: 0; min-width: 55px; }
+    .t-prompt { color: var(--blood); flex-shrink: 0; }
+    .t-cmd    { color: var(--white); }
+    .t-out    { color: var(--green); }
+    .t-err    { color: var(--error); }
+    .t-info   { color: var(--cyan); }
+    .t-warn   { color: var(--warning); }
+    .t-gold   { color: var(--gold); }
+    .t-muted  { color: var(--gold-muted); }
+    .t-purple { color: var(--purple); }
+    .t-tag    { color: var(--purple); font-weight: 600; min-width: 80px; flex-shrink: 0; }
+    .t-blank  { height: 0.6em; }
+
+    .terminal-input-area {
+      background: var(--chapel);
+      border-top: 1px solid var(--border-dim);
+      padding: var(--sp-3) var(--sp-5);
+      flex-shrink: 0;
+    }
+
+    .terminal-input-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-3);
+    }
+
+    .terminal-prompt-symbol {
+      color: var(--blood);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      text-shadow: 0 0 8px var(--blood-glow);
+    }
+
+    .terminal-cmd-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--green);
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      caret-color: var(--green);
+    }
+
+    .terminal-statusbar {
+      background: var(--chapel);
+      border-top: 1px solid var(--border-dim);
+      padding: var(--sp-2) var(--sp-5);
+      display: flex;
+      gap: var(--sp-6);
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+
+    .term-status-item {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+      color: var(--ash);
+      white-space: nowrap;
+    }
+
+    .term-status-item .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 4px var(--green);
+      flex-shrink: 0;
+    }
+
+    .term-status-item .val { color: var(--white); }
+
+    /* Quick commands sidebar */
+    .term-sidebar {
+      width: 200px;
+      background: var(--abyss);
+      border: 1px solid var(--border-dim);
+      border-left: none;
+      border-radius: 0 var(--r-xl) 0 0;
+      padding: var(--sp-4);
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .term-sidebar-title {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      color: var(--ash);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: var(--sp-3);
+    }
+
+    .term-cmd-btn {
+      display: block;
+      width: 100%;
+      background: transparent;
+      border: 1px solid var(--border-dim);
+      color: var(--ash);
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      padding: 6px 10px;
+      border-radius: var(--r-sm);
+      text-align: left;
+      cursor: pointer;
+      margin-bottom: var(--sp-2);
+      transition: var(--t-fast);
+    }
+
+    .term-cmd-btn:hover {
+      background: rgba(157,78,221,0.1);
+      border-color: var(--purple);
+      color: var(--white);
+    }
+
+    /* Agent activity feed */
+    .term-activity {
+      position: fixed;
+      bottom: 48px;
+      right: var(--sp-4);
+      width: 280px;
+      max-height: 200px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-1);
+      z-index: 100;
+    }
+
+    .activity-entry {
+      background: rgba(10,10,16,0.9);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--r-md);
+      padding: var(--sp-2) var(--sp-3);
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      animation: slideUp 0.2s ease-out;
+    }
+
+    .activity-tag { color: var(--purple); font-weight: 600; }
+    .activity-msg { color: var(--parchment); margin-left: var(--sp-2); }
+
+    /* Command help panel */
+    .term-help {
+      position: fixed;
+      bottom: 48px;
+      left: var(--sp-4);
+      background: rgba(10,10,16,0.95);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--r-lg);
+      padding: var(--sp-4);
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--ash);
+      backdrop-filter: blur(12px);
+      max-width: 300px;
+    }
+
+    .term-help-title { color: var(--white); margin-bottom: var(--sp-2); font-weight: 600; }
+    .term-help-row { display: flex; gap: var(--sp-4); margin-bottom: 4px; }
+    .term-help-key { color: var(--green); min-width: 60px; }
+    .term-help-desc { color: var(--dust); }
+
+    @media (max-width: 768px) {
+      .term-sidebar { display: none; }
+      .term-help { display: none; }
+    }
+  </style>
+</head>
+<body class="crt">
+
+  <!-- Nav (minimal) -->
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"       class="nav-link">Home</a>
+      <a href="terminal.html"    class="nav-link active">Terminal</a>
+      <a href="dashboard.html"   class="nav-link">Dashboard</a>
+      <a href="arena.html"       class="nav-link">Arena</a>
+      <a href="agents.html"      class="nav-link">Agents</a>
+      <a href="economy.html"      class="nav-link">Economy</a>
+      <a href="tasks.html"       class="nav-link">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link">Benchmarks</a>
+    </div>
+    <div class="nav-status">
+      <div class="status-dot"></div>
+      <span id="nav-status-text">initializing</span>
+    </div>
+  </nav>
+
+  <!-- Main Terminal Area -->
+  <div class="terminal-page">
+    <div class="terminal-main" style="flex-direction:row; align-items:stretch; gap:0;">
+
+      <!-- Left: commands list -->
+      <div class="term-sidebar" style="border-radius:var(--r-xl) 0 0 0;">
+        <div class="term-sidebar-title">Quick Commands</div>
+        <button class="term-cmd-btn" onclick="insertCmd('status')">→ status</button>
+        <button class="term-cmd-btn" onclick="insertCmd('agents list')">→ agents list</button>
+        <button class="term-cmd-btn" onclick="insertCmd('tasks')">→ tasks</button>
+        <button class="term-cmd-btn" onclick="insertCmd('economy')">→ economy</button>
+        <button class="term-cmd-btn" onclick="insertCmd('hive info')">→ hive info</button>
+        <button class="term-cmd-btn" onclick="insertCmd('benchmark run all')">→ benchmark run all</button>
+        <button class="term-cmd-btn" onclick="insertCmd('arena run')">→ arena run</button>
+        <button class="term-cmd-btn" onclick="insertCmd('forge spawn WebScout')">→ forge spawn <agent></button>
+        <button class="term-cmd-btn" onclick="insertCmd('cleanup prune')">→ cleanup prune</button>
+        <button class="term-cmd-btn" onclick="insertCmd('clear')">→ clear</button>
+        <div class="term-sidebar-title" style="margin-top:var(--sp-4);">Examples</div>
+        <button class="term-cmd-btn" onclick="insertCmd('analyze connectiify.com')">→ analyze <url></button>
+        <button class="term-cmd-btn" onclick="insertCmd('search best AI tools 2026')">→ search <query></button>
+        <button class="term-cmd-btn" onclick="insertCmd('run diagnostics')">→ run diagnostics</button>
+        <button class="term-cmd-btn" onclick="insertCmd('report generate Q2')">→ report generate</button>
+      </div>
+
+      <!-- Terminal window -->
+      <div class="terminal-window" style="flex:1;">
+        <div class="terminal-titlebar">
+          <div class="terminal-titlebar-dots">
+            <div class="terminal-titlebar-dot" style="background:#ff5f56;"></div>
+            <div class="terminal-titlebar-dot" style="background:#ffbd2e;"></div>
+            <div class="terminal-titlebar-dot" style="background:#27c93f;"></div>
+          </div>
+          <div class="terminal-titlebar-title">HIVE OS — SWARM TERMINAL v2.0</div>
+          <div style="display:flex; gap:var(--sp-2); align-items:center;">
+            <div class="live-indicator"><div class="dot"></div> LIVE</div>
+          </div>
+        </div>
+
+        <div class="terminal-output" id="terminal-output">
+          <!-- Output lines injected by JS -->
+        </div>
+
+        <div class="terminal-input-area">
+          <div class="terminal-input-row">
+            <span class="terminal-prompt-symbol">HIV</span>
+            <input
+              id="terminal-input"
+              class="terminal-cmd-input"
+              type="text"
+              placeholder="Type a command... (try 'help' for commands)"
+              autocomplete="off"
+              spellcheck="false"
+              autofocus
+            >
+          </div>
+        </div>
+
+        <div class="terminal-statusbar" id="terminal-statusbar">
+          <div class="term-status-item"><div class="dot"></div> <span>AGENTS: <span class="val" id="stat-agents">--</span></span></div>
+          <div class="term-status-item"><span>MODEL: <span class="val">qwen2.5:7b</span></span></div>
+          <div class="term-status-item"><span>BUDGET: <span class="val" id="stat-budget">--</span></span></div>
+          <div class="term-status-item"><span>TASKS: <span class="val" id="stat-tasks">--</span></span></div>
+          <div class="term-status-item"><span>SESSION: <span class="val" id="stat-session">00:00:00</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent activity feed -->
+  <div class="term-activity" id="term-activity"></div>
+
+  <!-- Keyboard help -->
+  <div class="term-help">
+    <div class="term-help-title">Keyboard Shortcuts</div>
+    <div class="term-help-row"><span class="term-help-key">↑ / ↓</span><span class="term-help-desc">History</span></div>
+    <div class="term-help-row"><span class="term-help-key">Tab</span><span class="term-help-desc">Complete</span></div>
+    <div class="term-help-row"><span class="term-help-key">Ctrl+L</span><span class="term-help-desc">Clear</span></div>
+    <div class="term-help-row"><span class="term-help-key">Ctrl+C</span><span class="term-help-desc">Interrupt</span></div>
+    <div class="term-help-row"><span class="term-help-key">help</span><span class="term-help-desc">All commands</span></div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    /* ─── TERMINAL ENGINE ──────────────────────────────────────── */
+    const output = document.getElementById('terminal-output');
+    const input  = document.getElementById('terminal-input');
+    let history  = [];
+    let histIdx  = -1;
+    let cmdCount = 0;
+    let sessionStart = Date.now();
+
+    function now() {
+      const d = new Date();
+      return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+    }
+
+    function addLine(type, msg, tag = '') {
+      const line = document.createElement('div');
+      line.className = 't-line';
+
+      if (tag) {
+        const ts  = document.createElement('span');
+        ts.className = 't-ts';
+        ts.textContent = now();
+        const tg  = document.createElement('span');
+        tg.className = 't-tag';
+        tg.textContent = tag;
+        const txt = document.createElement('span');
+        txt.className = 't-' + type;
+        txt.innerHTML = msg;
+        line.appendChild(ts);
+        line.appendChild(tg);
+        line.appendChild(txt);
+      } else {
+        const ts = document.createElement('span');
+        ts.className = 't-ts';
+        ts.textContent = now();
+        const txt = document.createElement('span');
+        txt.className = type === 'cmd' ? 't-cmd' : ('t-' + type);
+        txt.innerHTML = msg;
+        line.appendChild(ts);
+        line.appendChild(txt);
+      }
+      output.appendChild(line);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function addPromptLine(cmd) {
+      const line = document.createElement('div');
+      line.className = 't-line';
+      line.innerHTML = `<span class="t-ts">${now()}</span><span class="t-prompt">$ </span><span class="t-cmd">${escHtml(cmd)}</span>`;
+      output.appendChild(line);
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');
+    }
+
+    /* ─── COMMAND HANDLER ───────────────────────────────────────── */
+    const COMMANDS = {
+      help: () => {
+        addLine('info', 'HIVE OS Terminal Commands', '[HELP]');
+        addLine('muted', '═══════════════════════════════════════════════════', '');
+        addLine('gold',   '  status              — Show swarm status overview', '');
+        addLine('gold',   '  agents [list|kill]  — List or kill agents', '');
+        addLine('gold',   '  tasks [submit|list] — Task management', '');
+        addLine('gold',   '  economy             — Budget and transaction log', '');
+        addLine('gold',   '  hive info           — Full hive configuration', '');
+        addLine('gold',   '  benchmark [run|id] — Run or list benchmarks', '');
+        addLine('gold',   '  arena [run|stats]   — Run or view arena', '');
+        addLine('gold',   '  forge spawn <agent> — Spawn a new worker agent', '');
+        addLine('gold',   '  cleanup [prune|all] — Remove idle/empty agents', '');
+        addLine('gold',   '  clear               — Clear terminal output', '');
+        addLine('gold',   '  analyze <url>      — Analyze a website', '');
+        addLine('gold',   '  search <query>     — Web search via agent', '');
+        addLine('gold',   '  run diagnostics     — Run system diagnostics', '');
+        addLine('gold',   '  report <topic>    — Generate report via agent', '');
+        addLine('muted',  '═══════════════════════════════════════════════════', '');
+        addLine('info',   'All commands run via the agent society. Powered by Qwen Cloud.', '');
+      },
+
+      clear: () => {
+        output.innerHTML = '';
+        addLine('muted', 'Terminal cleared.', '');
+      },
+
+      status: async () => {
+        addLine('info', 'Querying swarm status...', '[STATUS]');
+        const data = await HIVE.apiGet('/api/metrics');
+        if (data) {
+          addLine('info', `Active Agents: ${data.active_agents}`, '[STATUS]');
+          addLine('info', `Tasks Completed: ${data.tasks_completed}`, '[STATUS]');
+          addLine('info', `Budget: ${data.budget_used} / ${data.budget_total}`, '[STATUS]');
+          addLine('info', `Efficiency: ${data.efficiency}%`, '[STATUS]');
+          if (data.model) addLine('info', `Model: ${data.model}`, '[STATUS]');
+          if (data.uptime) addLine('info', `Uptime: ${data.uptime}`, '[STATUS]');
+        } else {
+          addLine('err', 'Backend not responding. Start with: python main.py', '[STATUS]');
+        }
+      },
+
+      'hive info': async () => {
+        addLine('info', 'Hive configuration:', '[HIVE]');
+        addLine('gold', '  Name: HIVE OS — Autonomous Agent Society', '');
+        addLine('gold', '  Version: 2.0.0', '');
+        addLine('gold', '  Leader: HiveCore (DashScope / Ollama)', '');
+        addLine('gold', '  Creator: AgentForge', '');
+        addLine('gold', '  Destructor: CleanupCrew', '');
+        addLine('gold', '  Workers: 14 specialist agents', '');
+        addLine('gold', '  Model: qwen2.5:7b (default)', '');
+        addLine('gold', '  Mode: Cloud + Local (adaptive)', '');
+        addLine('info', 'Full config from backend:', '[HIVE]');
+        const data = await HIVE.apiGet('/api/hive');
+        if (data) {
+          addLine('out', JSON.stringify(data, null, 2));
+        }
+      },
+
+      'agents list': async () => {
+        addLine('info', 'Fetching agent registry...', '[AGENTS]');
+        const data = await HIVE.apiGet('/api/agents/states');
+        if (data && data.agents) {
+          addLine('info', `Registered agents: ${data.agents.length}`, '[AGENTS]');
+          data.agents.forEach(a => {
+            const state = a.state || 'unknown';
+            const emotion = a.emotion || 'calm';
+            addLine(state === 'active' ? 'out' : 'muted',
+              `${a.name || a.id} — ${state} — ${emotion} — $${a.total_cost || 0}`, '');
+          });
+        } else {
+          addLine('err', 'No agent data. Backend may be offline.', '[AGENTS]');
+        }
+      },
+
+      economy: async () => {
+        addLine('info', 'Fetching economy data...', '[ECONOMY]');
+        const data = await HIVE.apiGet('/api/economy');
+        if (data) {
+          addLine('gold', `Budget: ${data.budget} / ${data.budget_total} tokens`, '');
+          addLine('info', `Spent: ${data.spent} | Pending: ${data.pending}`, '');
+          if (data.transactions && data.transactions.length) {
+            addLine('muted', 'Recent transactions:', '');
+            data.transactions.slice(0, 5).forEach(t => {
+              addLine('out', `  ${t.agent}: -${t.cost} (${t.task})`, '');
+            });
+          }
+        } else {
+          addLine('err', 'Backend offline. Economy data unavailable.', '[ECONOMY]');
+        }
+      },
+
+      tasks: async () => {
+        addLine('info', 'Fetching task queue...', '[TASKS]');
+        const data = await HIVE.apiGet('/api/tasks');
+        if (data) {
+          const pending = (data.pending || []).length;
+          const running  = (data.running  || []).length;
+          const done     = (data.completed || []).length;
+          addLine('gold', `Queue: ${pending} pending | ${running} running | ${done} completed`, '');
+        } else {
+          addLine('err', 'Backend offline.', '[TASKS]');
+        }
+      },
+
+      'benchmark run all': async () => {
+        addLine('info', 'Running all benchmarks...', '[BENCHMARK]');
+        const data = await HIVE.apiPost('/api/benchmark/run_all', {});
+        if (data) {
+          addLine('gold', `Results: ${data.results ? Object.keys(data.results).length : 0} suites completed`, '');
+          addLine('info', 'View full results at /benchmarks.html', '');
+        } else {
+          addLine('err', 'Backend offline.', '[BENCHMARK]');
+        }
+      },
+
+      'arena run': async () => {
+        addLine('info', 'Starting arena match: Single Agent vs Society', '[ARENA]');
+        const data = await HIVE.apiPost('/api/arena', {});
+        if (data) {
+          addLine('gold', `Winner: ${data.winner}`, '');
+          addLine('info', `Scores — Society: ${data.society_score} | Single: ${data.single_score}`, '');
+          addLine('info', 'View live at /arena.html', '');
+        } else {
+          addLine('err', 'Backend offline.', '[ARENA]');
+        }
+      },
+
+      default: async (raw) => {
+        // Send to backend as task
+        addLine('info', 'Dispatching to agent society...', '[HiveCore]');
+        const data = await HIVE.apiPost('/api/tasks/sync', { description: raw });
+        if (data) {
+          if (data.status === 'completed') {
+            addLine('out', data.result || 'Task completed.', '[HiveCore]');
+          } else if (data.status === 'pending') {
+            addLine('info', `Task queued: ${data.task_id}`, '[HiveCore]');
+          } else {
+            addLine('out', JSON.stringify(data), '[HiveCore]');
+          }
+        } else {
+          addLine('err', 'Backend offline. Start backend with: python main.py', '[HiveCore]');
+          addLine('muted', 'Demo mode: try "help" to see available commands.', '');
+        }
+      }
+    };
+
+    async function handleCommand(raw) {
+      const cmd = raw.trim();
+      if (!cmd) return;
+      history.unshift(cmd);
+      histIdx = -1;
+
+      addPromptLine(cmd);
+      cmdCount++;
+
+      const lc = cmd.toLowerCase();
+      if (COMMANDS[lc]) {
+        await COMMANDS[lc]();
+      } else {
+        await COMMANDS.default(cmd);
+      }
+    }
+
+    /* ─── INPUT SETUP ───────────────────────────────────────────── */
+    input.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        const val = input.value;
+        input.value = '';
+        await handleCommand(val);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (histIdx < history.length - 1) {
+          histIdx++;
+          input.value = history[histIdx];
+        }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (histIdx > 0) {
+          histIdx--;
+          input.value = history[histIdx];
+        } else {
+          histIdx = -1;
+          input.value = '';
+        }
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        // Basic tab completion
+        const partial = input.value.toLowerCase();
+        const matches = Object.keys(COMMANDS).filter(c => c.startsWith(partial));
+        if (matches.length === 1) input.value = matches[0];
+        else if (matches.length > 1) {
+          addLine('muted', matches.join('  |  '), '');
+        }
+      } else if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        COMMANDS.clear();
+      } else if (e.key === 'c' && e.ctrlKey) {
+        e.preventDefault();
+        addLine('warn', `^C — interrupted`, '');
+        input.value = '';
+      }
+    });
+
+    function insertCmd(cmd) {
+      input.value = cmd;
+      input.focus();
+    }
+
+    /* ─── BOOT SEQUENCE ─────────────────────────────────────────── */
+    function boot() {
+      addLine('muted', '══════════════════════════════════════════════════════', '');
+      addLine('gold',   '  HIVE OS v2.0 — Autonomous Agent Operating System', '');
+      addLine('muted',  '══════════════════════════════════════════════════════', '');
+      addLine('info',   `Booting HiveCore... [${now()}]`, '[SYSTEM]');
+      addLine('info',   'Initializing agent society...', '[HiveCore]');
+      addLine('out',    '14 worker agents loaded.', '[HiveCore]');
+      addLine('out',    'AgentForge: READY', '[SYSTEM]');
+      addLine('out',    'CleanupCrew: READY', '[SYSTEM]');
+      addLine('info',   `Qwen Cloud: Connected (qwen2.5:7b)`, '[DashScope]');
+      addLine('info',   `Local Ollama: Available (gemma4)`, '[Ollama]');
+      addLine('info',   'Type "help" for commands.', '[HiveCore]');
+      addLine('blank',  '', '');
+    }
+    boot();
+
+    /* ─── REFRESH STATUS BAR ────────────────────────────────────── */
+    setInterval(() => {
+      const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+      const h = String(Math.floor(elapsed / 3600)).padStart(2,'0');
+      const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2,'0');
+      const s = String(elapsed % 60).padStart(2,'0');
+      const el = document.getElementById('stat-session');
+      if (el) el.textContent = `${h}:${m}:${s}`;
+    }, 1000);
+
+    HIVE.startRefresh(async () => {
+      const data = await HIVE.apiGet('/api/metrics');
+      if (data) {
+        document.getElementById('stat-agents').textContent = data.active_agents || '?';
+        document.getElementById('stat-budget').textContent = data.budget_used !== undefined ? `${data.budget_used}/${data.budget_total}` : '?';
+        document.getElementById('stat-tasks').textContent  = data.tasks_completed || '0';
+        document.getElementById('nav-status-text').textContent = 'online';
+      } else {
+        document.getElementById('nav-status-text').textContent = 'offline';
+      }
+    }, 5000);
+
+    /* ─── SSE ACTIVITY FEED ──────────────────────────────────────── */
+    HIVE.connectSSE((event) => {
+      const feed = document.getElementById('term-activity');
+      if (!feed) return;
+      if (feed.children.length > 8) feed.lastElementChild.remove();
+
+      const e = document.createElement('div');
+      e.className = 'activity-entry';
+      const agent = event.agent || 'HiveCore';
+      const msg   = event.message || event.type || JSON.stringify(event).slice(0,50);
+      e.innerHTML = `<span class="activity-tag">[${agent}]</span><span class="activity-msg">${msg}</span>`;
+      feed.insertBefore(e, feed.firstChild);
+    });
+
+    input.focus();
+    document.addEventListener('keydown', (e) => {
+      if (e.target !== input && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>

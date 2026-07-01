@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Economy — HIVE OS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600;700&family=Rubik:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { background: var(--void); }
+    .budget-bar-wrap { margin: var(--sp-6) 0; }
+    .budget-bar-track { height: 24px; background: var(--border-dim); border-radius: var(--r-lg); overflow:hidden; position:relative; }
+    .budget-bar-fill { height:100%; border-radius:var(--r-lg); transition:width 1s ease; position:relative; }
+    .budget-bar-fill::after { content:''; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent); animation:progress-shine 2s ease-in-out infinite; }
+    .budget-bar-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:0.75rem; font-weight:600; color:white; }
+    .spend-row { display:flex; gap:var(--sp-4); align-items:center; padding:var(--sp-3) 0; border-bottom:1px solid var(--border-dim); }
+    .spend-row:last-child { border-bottom:none; }
+    .spend-agent { flex:1; font-family:var(--font-mono); font-size:0.875rem; color:var(--parchment); }
+    .spend-bar-wrap { flex:2; }
+    .spend-amt { font-family:var(--font-mono); font-size:0.875rem; color:var(--gold); min-width:60px; text-align:right; }
+    .tx-row { display:grid; grid-template-columns:80px 120px 1fr 80px; gap:var(--sp-4); padding:var(--sp-3) var(--sp-4); border-bottom:1px solid rgba(30,27,46,0.5); font-family:var(--font-mono); font-size:0.8125rem; align-items:center; }
+    .tx-row:last-child { border-bottom:none; }
+    .tx-ts { color:var(--ash); font-size:0.75rem; }
+    .tx-agent { color:var(--purple); }
+    .tx-desc { color:var(--parchment); }
+    .tx-amt { color:var(--gold); text-align:right; }
+  </style>
+</head>
+<body class="crt">
+  <nav class="nav">
+    <a href="index.html" class="nav-logo">HIVE<span>OS</span></a>
+    <div class="nav-links">
+      <a href="index.html"       class="nav-link">Home</a>
+      <a href="terminal.html"    class="nav-link">Terminal</a>
+      <a href="dashboard.html"   class="nav-link">Dashboard</a>
+      <a href="arena.html"       class="nav-link">Arena</a>
+      <a href="agents.html"      class="nav-link">Agents</a>
+      <a href="economy.html"      class="nav-link active">Economy</a>
+      <a href="tasks.html"       class="nav-link">Tasks</a>
+      <a href="benchmarks.html"  class="nav-link">Benchmarks</a>
+    </div>
+    <div class="nav-status"><div class="status-dot"></div><span id="nav-status-text">initializing</span></div>
+  </nav>
+
+  <div class="page">
+    <div class="container" style="padding-top:var(--sp-8);">
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-6);">
+        <div>
+          <h1 style="font-size:1.75rem;">Token Economy</h1>
+          <p style="color:var(--ash); font-size:0.875rem; margin:0;">Budget tracking and cost attribution</p>
+        </div>
+        <button class="btn btn-gothic btn-sm" onclick="location.reload()">↻ Refresh</button>
+      </div>
+
+      <!-- Budget overview -->
+      <div class="grid-2" style="margin-bottom:var(--sp-6);">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">💰 Budget Overview</span>
+            <span class="badge badge-gold" id="budget-badge">--</span>
+          </div>
+          <div class="budget-bar-wrap">
+            <div class="budget-bar-track">
+              <div class="budget-bar-fill" id="budget-bar" style="width:0%; background:linear-gradient(90deg,var(--crimson),var(--purple));"></div>
+              <div class="budget-bar-text" id="budget-bar-text">-- / -- tokens</div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-4); text-align:center;">
+            <div><div style="font-family:var(--font-mono); font-size:1.25rem; color:var(--gold);" id="eco-spent">--</div><div style="font-family:var(--font-mono); font-size:0.6rem; color:var(--ash); text-transform:uppercase;">Spent</div></div>
+            <div><div style="font-family:var(--font-mono); font-size:1.25rem; color:var(--purple);" id="eco-pending">--</div><div style="font-family:var(--font-mono); font-size:0.6rem; color:var(--ash); text-transform:uppercase;">Pending</div></div>
+            <div><div style="font-family:var(--font-mono); font-size:1.25rem; color:var(--green);" id="eco-remaining">--</div><div style="font-family:var(--font-mono); font-size:0.6rem; color:var(--ash); text-transform:uppercase;">Remaining</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">📊 Cost by Agent</span>
+          </div>
+          <div id="spend-list" style="display:flex; flex-direction:column; gap:var(--sp-2);">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Transaction log -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Transaction Log</span>
+          <div class="live-indicator" style="font-size:0.45rem;"><div class="dot"></div> LIVE</div>
+        </div>
+        <div style="max-height:500px; overflow-y:auto;">
+          <div style="display:grid; grid-template-columns:80px 120px 1fr 80px; gap:var(--sp-4); padding:var(--sp-3) var(--sp-6); border-bottom:1px solid var(--border-dim); font-family:var(--font-mono); font-size:0.6875rem; color:var(--ash); text-transform:uppercase; letter-spacing:0.06em; position:sticky; top:0; background:var(--abyss);">
+            <span>Time</span><span>Agent</span><span>Description</span><span style="text-align:right;">Cost</span>
+          </div>
+          <div id="tx-list">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    async function loadEconomy() {
+      const data = await HIVE.apiGet('/api/economy');
+      if (data) {
+        document.getElementById('nav-status-text').textContent = 'online';
+        updateEconomy(data);
+      } else {
+        // Demo data
+        document.getElementById('nav-status-text').textContent = 'demo mode';
+        updateEconomy({
+          budget: 10000, budget_total: 10000, spent: 267, pending: 12,
+          transactions: [
+            { agent:'HiveCore',      task:'coordination', cost:45,  ts:Date.now()/1000-300 },
+            { agent:'WebScout',      task:'search task',   cost:8,   ts:Date.now()/1000-280 },
+            { agent:'Diagnostician', task:'health check',  cost:15,  ts:Date.now()/1000-260 },
+            { agent:'ReportAgent',   task:'report gen',   cost:22,  ts:Date.now()/1000-240 },
+            { agent:'GPUtuner',      task:'VRAM opt',      cost:30,  ts:Date.now()/1000-220 },
+            { agent:'DataAnalyst',   task:'analysis',      cost:18,  ts:Date.now()/1000-200 },
+            { agent:'CodeArchitect', task:'design',        cost:35,  ts:Date.now()/1000-180 },
+            { agent:'RedTeamAgent',  task:'security scan',  cost:25,  ts:Date.now()/1000-160 },
+            { agent:'SchedulerAgent',task:'scheduling',    cost:9,   ts:Date.now()/1000-140 },
+            { agent:'AgentForge',    task:'spawn agent',   cost:12,  ts:Date.now()/1000-120 },
+            { agent:'WebScout',      task:'search task',   cost:8,   ts:Date.now()/1000-100 },
+            { agent:'CloudTester',   task:'deploy test',   cost:7,   ts:Date.now()/1000-80 },
+          ],
+          spend_by_agent: { HiveCore:45, AgentForge:12, WebScout:16, Diagnostician:15, ReportAgent:22, GPUtuner:30, DataAnalyst:18, CodeArchitect:35, RedTeamAgent:25, SchedulerAgent:9, CloudTester:7, CleanupCrew:3, SecurityScout:11, CodeRunner:5, AccountManager:6, CommunicatorAgent:2, PaymentAgent:0 },
+        });
+      }
+    }
+
+    function updateEconomy(data) {
+      const spent     = data.spent     || 0;
+      const total     = data.budget_total || data.budget || 10000;
+      const pending   = data.pending   || 0;
+      const remaining = total - spent;
+
+      const pct = clamp((spent / total) * 100, 0, 100);
+      const bar  = document.getElementById('budget-bar');
+      bar.style.width = `${pct}%`;
+      bar.style.background = pct > 80 ? 'linear-gradient(90deg,var(--crimson),var(--error))' : pct > 60 ? 'linear-gradient(90deg,var(--crimson),var(--purple))' : 'linear-gradient(90deg,var(--purple),var(--gold))';
+      document.getElementById('budget-bar-text').textContent = `${spent} / ${total} tokens`;
+      document.getElementById('budget-badge').textContent = pct > 80 ? 'CRITICAL' : pct > 60 ? 'WARNING' : 'OK';
+
+      document.getElementById('eco-spent').textContent     = spent;
+      document.getElementById('eco-pending').textContent   = pending;
+      document.getElementById('eco-remaining').textContent  = remaining;
+
+      // Spend by agent
+      const spendList = document.getElementById('spend-list');
+      if (data.spend_by_agent) {
+        const sorted = Object.entries(data.spend_by_agent).sort((a, b) => b[1] - a[1]);
+        spendList.innerHTML = sorted.slice(0, 8).map(([agent, amt]) => {
+          const max = sorted[0][1] || 1;
+          return `
+            <div class="spend-row">
+              <span class="spend-agent">${agent}</span>
+              <div class="spend-bar-wrap">
+                <div style="height:8px; background:var(--border-dim); border-radius:var(--r-pill); overflow:hidden;">
+                  <div style="height:100%; width:${(amt/max)*100}%; background:var(--gold); border-radius:var(--r-pill);"></div>
+                </div>
+              </div>
+              <span class="spend-amt">$${amt}</span>
+            </div>`;
+        }).join('');
+      }
+
+      // Transactions
+      const txList = document.getElementById('tx-list');
+      if (data.transactions && data.transactions.length) {
+        txList.innerHTML = data.transactions.map(t => `
+          <div class="tx-row">
+            <span class="tx-ts">${timeAgo(t.ts)}</span>
+            <span class="tx-agent">${t.agent}</span>
+            <span class="tx-desc">${t.task}</span>
+            <span class="tx-amt">-$${t.cost}</span>
+          </div>`).join('');
+      } else {
+        txList.innerHTML = '<div style="padding:var(--sp-8); text-align:center; color:var(--ash); font-family:var(--font-mono);">No transactions yet</div>';
+      }
+    }
+
+    function timeAgo(ts) {
+      const d = Date.now()/1000 - ts;
+      if (d < 60) return `${Math.round(d)}s ago`;
+      if (d < 3600) return `${Math.round(d/60)}m ago`;
+      return `${Math.round(d/3600)}h ago`;
+    }
+
+    loadEconomy();
+    HIVE.startRefresh(loadEconomy, 5000);
+  </script>
+</body>
+</html>
