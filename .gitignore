@@ -21,3 +21,27 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+
+### Python ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+.venv
+env/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+### HIVE specific ###
+db/hive.db
+*.log
+.DS_Store
