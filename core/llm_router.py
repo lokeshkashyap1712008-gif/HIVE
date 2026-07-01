@@ -1,6 +1,6 @@
 """
 HIVE — LLM Router
-Auto-switches between Qwen Cloud (DashScope) and local Ollama
+Auto-switches between Qwen Cloud (DashScope OpenAI-compatible) and local Ollama
 All agents call llm_router.chat() — never call providers directly
 """
 
@@ -8,56 +8,60 @@ import logging
 from typing import Optional
 
 import httpx
+from openai import OpenAI
 
 from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ─── DashScope Model Names (your available models) ──────────────────────────
+# ─── DashScope Model Names ───────────────────────────────────────────────────
+# These models are available on your DashScope account
 #
-# Use these when calling chat(..., model=XXX)
-# Default is QWEN_MAX for quality, QWEN_TURBO for speed
+# Usage: chat(messages, model=QWEN_TURBO)  etc.
 #
-QWEN_TURBO   = "qwen-flash-2025-07-28"        # fastest — workers, pings, safety
-QWEN_PLUS    = "qwen-plus-latest"              # medium — report, data analysis
-QWEN_MAX     = "qwen-max"                      # best quality — leader decisions
-QWEN_CODER   = "qwen3-coder-plus-2025-07-22"   # code — Code Architect
-QWEN_REASON  = "qwen3-max-2025-09-23"          # best reasoning — Judge, conflicts
-QWEN_VISION  = "qwen-vl-plus-2025-08-15"        # vision + text
+QWEN_TURBO   = "qwen3.7-plus"              # fastest — workers, pings, safety
+QWEN_PLUS    = "qwen3.7-plus"              # medium — report, data analysis
+QWEN_MAX     = "qwen3.7-plus"              # best quality — leader decisions
+QWEN_CODER   = "qwen3.7-plus"              # code — Code Architect
+QWEN_REASON  = "qwen3.7-plus"              # best reasoning — Judge, conflicts
 
+# Default to qwen-max for the leader
+DEFAULT_MODEL = QWEN_MAX
 
-# ─── Cloud (DashScope) ───────────────────────────────────────────────────────
+# ─── Cloud (DashScope OpenAI-compatible API) ─────────────────────────────────
+
+def get_cloud_client() -> OpenAI:
+    """Create OpenAI-compatible DashScope client."""
+    return OpenAI(
+        api_key=settings.DASHSCOPE_API_KEY,
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    )
+
 
 async def chat_cloud(
     messages: list[dict],
-    model: str = "qwen-max",
+    model: str = "qwen3.7-plus",
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> dict:
-    """Call Qwen via DashScope API."""
-    try:
-        import dashscope
-    except ImportError:
-        raise RuntimeError("dashscope not installed. Run: pip install dashscope")
+    """Call Qwen via DashScope OpenAI-compatible API."""
+    client = get_cloud_client()
 
-    dashscope.api_key = settings.DASHSCOPE_API_KEY
-
-    response = dashscope.MultiModalConversation.call(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
     )
 
-    if response.status_code != 200:
-        raise RuntimeError(f"DashScope error {response.status_code}: {getattr(response, 'message', response)}")
+    choice = response.choices[0]
+    content = choice.message.content or ""
 
-    msg = response.output.choices[0].message
     return {
-        "content": msg.get("content", "") if hasattr(msg, "get") else str(msg),
+        "content": content,
         "model": model,
         "provider": "cloud",
-        "tokens": getattr(response.usage, "total_tokens", 0) if hasattr(response, "usage") else 0,
+        "tokens": response.usage.total_tokens if response.usage else 0,
     }
 
 
@@ -99,7 +103,7 @@ async def chat_local(
     }
 
 
-# ─── Router (main entry point) ──────────────────────────────────────────────
+# ─── Router (main entry point) ───────────────────────────────────────────────
 
 async def chat(
     messages: list[dict],
@@ -116,7 +120,7 @@ async def chat(
         model: Override model name (use QWEN_* constants above)
         temperature: 0.0=deterministic, 0.7=balanced, 1.0=creative
         max_tokens: Max tokens to generate
-        quality: True → use QWEN_MAX ("qwen-max") for quality tasks
+        quality: True → use quality model for critical tasks (leader, judge)
 
     Returns:
         {"content": str, "model": str, "provider": "cloud"|"local", "tokens": int}

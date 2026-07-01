@@ -97,6 +97,51 @@ def test_worker_stubs():
         assert "status" in r or "overall" in r, f"Worker result missing both 'status' and 'overall': {list(r.keys())}"
 
 
+def test_chat_falls_back_to_local_when_cloud_fails(monkeypatch):
+    """Cloud failures should automatically fall back to the local backend."""
+    from core import llm_router
+
+    async def fake_chat_cloud(*args, **kwargs):
+        raise RuntimeError("DashScope error 401: Invalid API-key provided")
+
+    async def fake_chat_local(*args, **kwargs):
+        return {"content": "fallback", "model": "local", "provider": "local", "tokens": 0}
+
+    monkeypatch.setattr(llm_router, "chat_cloud", fake_chat_cloud)
+    monkeypatch.setattr(llm_router, "chat_local", fake_chat_local)
+    llm_router.settings.DASHSCOPE_API_KEY = "bad-key"
+    llm_router.settings.LLM_PROVIDER = "auto"
+
+    result = asyncio.get_event_loop().run_until_complete(
+        llm_router.chat([{"role": "user", "content": "hello"}])
+    )
+
+    assert result["provider"] == "local"
+    assert result["content"] == "fallback"
+
+
+def test_chat_respects_cloud_only_setting(monkeypatch):
+    """An explicit cloud-only setting should bypass local fallback."""
+    from core import llm_router
+
+    async def fake_chat_cloud(*args, **kwargs):
+        return {"content": "cloud", "model": "cloud-model", "provider": "cloud", "tokens": 7}
+
+    async def fake_chat_local(*args, **kwargs):
+        raise AssertionError("local backend should not be used")
+
+    monkeypatch.setattr(llm_router, "chat_cloud", fake_chat_cloud)
+    monkeypatch.setattr(llm_router, "chat_local", fake_chat_local)
+    llm_router.settings.LLM_PROVIDER = "cloud"
+
+    result = asyncio.get_event_loop().run_until_complete(
+        llm_router.chat([{"role": "user", "content": "hello"}])
+    )
+
+    assert result["provider"] == "cloud"
+    assert result["content"] == "cloud"
+
+
 def test_benchmark_files_exist():
     """All benchmark files exist and are importable."""
     from benchmarks import single_vs_multi, stress_test, fault_tolerance
