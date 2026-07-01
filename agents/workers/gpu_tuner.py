@@ -1,247 +1,144 @@
 """
-HIVE — GPU Tuner Worker
-Monitors and optimizes GPU usage, thermal management, nvidia-smi, VRAM allocation
+HIVE — GPU Tuner Agent
+Real nvidia-smi integration for GPU monitoring and thermal management.
+Reads: temperature, utilization %, VRAM, clock speeds.
+Detects thermal throttling (>80C) and auto-cools.
 """
 
-import logging
 import subprocess
-import time
+import re
+import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-class GPUTuner:
-    """Monitors GPU, optimizes VRAM, manages thermal throttling."""
-
-    async def run(description: str, context: dict = None) -> dict:
-        description = description.lower()
-        context = context or {}
-
-        try:
-            if not _gpu_available():
-                return {"status": "no_gpu", "message": "No NVIDIA GPU detected. Run 'nvidia-smi' to verify."}
-
-            if any(word in description for word in ["thermal", "temperature", "temp", "hot", "throttle"]):
-                return await _check_thermal()
-            elif any(word in description for word in ["vram", "memory", "gpu memory", "oom"]):
-                return await _check_vram()
-            elif any(word in description for word in ["optimize", "tune", "boost", "overclock"]):
-                return await _optimize_gpu(description)
-            elif any(word in description for word in ["process", "running", "utilization", "usage"]):
-                return await _check_utilization()
-            else:
-                return await _full_diagnostic()
-
-        except Exception as e:
-            logger.error(f"[GPUTuner] Error: {e}")
-            return {"status": "error", "error": str(e)}
-
-
-def _gpu_available() -> bool:
+def _run_nvidia_smi(args: str) -> Optional[str]:
+    """Run nvidia-smi and return output, or None if no GPU."""
     try:
-        subprocess.run(["nvidia-smi"], capture_output=True, timeout=5)
-        return True
-    except Exception:
-        return False
-
-
-async def _check_thermal() -> dict:
-    """Check GPU temperatures and thermal status."""
-    try:
-        output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=index,temperature.gpu,power.draw,clocks.current.sm",
-             "--format=csv,noheader,nounits"],
-            text=True, timeout=5
+        result = subprocess.run(
+            ["nvidia-smi"] + args.split(),
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
+        if result.returncode == 0:
+            return result.stdout
+        return None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
 
-        lines = [l.strip() for l in output.strip().split("\n") if l.strip()]
-        gpus = []
-        for line in lines:
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 4:
-                gpu = {
-                    "index": parts[0],
-                    "temperature_c": float(parts[1]),
-                    "power_watts": float(parts[2]),
-                    "clock_mhz": float(parts[3]),
-                }
-                # Thermal assessment
-                if gpu["temperature_c"] >= 85:
-                    gpu["thermal_status"] = "CRITICAL — throttling likely"
-                    gpu["recommendation"] = "Improve airflow, reduce power limit, undervolt"
-                elif gpu["temperature_c"] >= 75:
-                    gpu["thermal_status"] = "HIGH — monitoring recommended"
-                    gpu["recommendation"] = "Consider additional cooling"
-                else:
-                    gpu["thermal_status"] = "NORMAL"
-                    gpu["recommendation"] = "No action needed"
 
-                gpus.append(gpu)
-
+def get_gpu_status() -> dict:
+    """Get current GPU status via nvidia-smi."""
+    output = _run_nvidia_smi("--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,clocks.current.sm,clocks.current.memory --format=csv,noheader,nounits")
+    if not output:
         return {
-            "status": "checked",
-            "gpus": gpus,
-            "overall": "THERMAL_THROTTLE_RISK" if any(g["temperature_c"] >= 85 for g in gpus) else "OK",
+            "available": False,
+            "error": "No NVIDIA GPU found or nvidia-smi not available",
         }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
 
-
-async def _check_vram() -> dict:
-    """Check VRAM usage and availability."""
     try:
-        output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total,memory.free",
-             "--format=csv,noheader,nounits"],
-            text=True, timeout=5
-        )
-
-        lines = [l.strip() for l in output.strip().split("\n") if l.strip()]
-        gpus = []
-        for line in lines:
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 4:
-                used = float(parts[1])
-                total = float(parts[2])
-                free = float(parts[3])
-                percent = (used / total * 100) if total > 0 else 0
-
-                gpu = {
-                    "index": parts[0],
-                    "vram_used_mb": used,
-                    "vram_total_mb": total,
-                    "vram_free_mb": free,
-                    "usage_percent": round(percent, 1),
-                }
-
-                if percent >= 95:
-                    gpu["status"] = "CRITICAL — OOM risk"
-                    gpu["recommendation"] = "Reduce batch size, clear cache, restart processes"
-                elif percent >= 80:
-                    gpu["status"] = "HIGH — consider optimization"
-                    gpu["recommendation"] = "Monitor for OOM, optimize memory usage"
-                else:
-                    gpu["status"] = "OK"
-                    gpu["recommendation"] = "Memory available for more agents"
-
-                gpus.append(gpu)
-
-        return {
-            "status": "checked",
-            "gpus": gpus,
-            "total_vram_mb": sum(g["vram_total_mb"] for g in gpus),
-            "free_vram_mb": sum(g["vram_free_mb"] for g in gpus),
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-async def _check_utilization() -> dict:
-    """Check GPU utilization and running processes."""
-    try:
-        # Utilization
-        util_output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=index,utilization.gpu,utilization.memory",
-             "--format=csv,noheader,nounits"],
-            text=True, timeout=5
-        )
-
-        # Running processes
-        proc_output = subprocess.check_output(
-            ["nvidia-smi", "--query-compute-apps=pid,name,used_memory",
-             "--format=csv,noheader,nounits"],
-            text=True, timeout=5
-        )
-
-        processes = []
-        for line in proc_output.strip().split("\n"):
-            if line.strip():
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) >= 3:
-                    processes.append({
-                        "pid": parts[0],
-                        "name": parts[1],
-                        "vram_mb": float(parts[2]) if parts[2].strip() else 0,
-                    })
-
-        lines = [l.strip() for l in util_output.strip().split("\n") if l.strip()]
-        gpus = []
-        for i, line in enumerate(lines):
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 3:
-                gpus.append({
-                    "index": parts[0],
-                    "gpu_util_percent": float(parts[1]),
-                    "mem_util_percent": float(parts[2]),
-                    "running_processes": len([p for p in processes if True]),  # all show all for simplicity
-                })
-
-        return {
-            "status": "checked",
-            "gpus": gpus,
-            "processes": processes,
-            "total_processes": len(processes),
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-async def _optimize_gpu(description: str) -> dict:
-    """Provide GPU optimization recommendations."""
-    diagnostics = await _check_vram()
-    thermal = await _check_thermal()
-
-    recommendations = []
-
-    # Memory-based recommendations
-    for gpu in diagnostics.get("gpus", []):
-        if gpu.get("usage_percent", 0) >= 80:
-            recommendations.extend([
-                f"GPU {gpu['index']}: Reduce VRAM usage (currently {gpu['usage_percent']}%)",
-                "Use mixed precision (FP16) for inference",
-                "Enable gradient checkpointing for training",
-                "Set PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512",
-            ])
-
-    # Thermal-based recommendations
-    for gpu in thermal.get("gpus", []):
-        if gpu.get("temperature_c", 0) >= 75:
-            recommendations.extend([
-                f"GPU {gpu['index']}: Thermal issue detected ({gpu['temperature_c']}°C)",
-                "Set nvidia-smi --power-limit to reduce TDP",
-                "Consider undervolting (-50mV to start)",
-                "Increase fan speed: nvidia-settings -a [fan]/fan_speed=70",
-            ])
-
-    if not recommendations:
-        recommendations = [
-            "GPU is running optimally",
-            "Current settings are appropriate for current workload",
-            "No immediate action required",
+        name, temp, util, vram_used, vram_total, clock_sm, clock_mem = [
+            x.strip() for x in output.strip().split(",")
         ]
+        temp = int(temp)
+        util = int(util)
+        vram_used = int(vram_used)
+        vram_total = int(vram_total)
+        clock_sm = int(clock_sm)
+        clock_mem = int(clock_mem)
+    except Exception as e:
+        return {"available": False, "error": f"Parse error: {e}", "raw": output}
+
+    # Check thermal throttling
+    throttle_output = _run_nvidia_smi("--query-gpu=clocks_throttle_reasons.hw_slowdown --format=csv,noheader")
+    is_throttling = throttle_output and "N/A" not in throttle_output and throttle_output.strip() != "Not Active"
 
     return {
-        "status": "optimized",
-        "recommendations": recommendations,
-        "current_vram": diagnostics.get("gpus", [{}])[0].get("vram_used_mb", "N/A"),
-        "current_temp": thermal.get("gpus", [{}])[0].get("temperature_c", "N/A"),
+        "available": True,
+        "name": name,
+        "temperature_c": temp,
+        "utilization_pct": util,
+        "vram_used_mb": vram_used,
+        "vram_total_mb": vram_total,
+        "vram_pct": round(vram_used / vram_total * 100, 1),
+        "clock_sm_mhz": clock_sm,
+        "clock_mem_mhz": clock_mem,
+        "is_throttling": is_throttling,
+        "thermal_pressure": "high" if temp > 80 else ("medium" if temp > 70 else "normal"),
     }
 
 
-async def _full_diagnostic() -> dict:
-    """Run a complete GPU diagnostic."""
-    vram = await _check_vram()
-    thermal = await _check_thermal()
-    util = await _check_utilization()
+async def run(task: str) -> dict:
+    """Handle GPU tuning request."""
+    from core.llm_router import chat, QWEN_TURBO
+
+    status = get_gpu_status()
+
+    if not status.get("available", False):
+        return {
+            "status": "ok",
+            "gpu_available": False,
+            "message": "No NVIDIA GPU detected",
+            "suggestion": "This machine may not have an NVIDIA GPU, or nvidia-smi is not in PATH",
+        }
+
+    before_temp = status["temperature_c"]
+    suggestions = []
+
+    # Thermal management
+    if before_temp > 80:
+        suggestions.append("Temperature CRITICAL - apply cooling immediately")
+        # Try to reduce power limit to cool down
+        result = _run_nvidia_smi("-pl 150")  # Reduce power limit to 150W
+        if result:
+            suggestions.append("Power limit reduced to 150W to reduce heat")
+        # Try to limit clock speeds
+        result2 = _run_nvidia_smi("-lgc 300,900")  # Cap clocks
+        if result2:
+            suggestions.append("GPU clocks limited to reduce thermal output")
+
+    elif before_temp > 70:
+        suggestions.append("Temperature elevated - monitor closely")
+
+    if status.get("is_throttling"):
+        suggestions.append("HW throttling detected - GPU is thermally constrained")
+
+    # Memory pressure
+    if status.get("vram_pct", 0) > 90:
+        suggestions.append("VRAM >90% full - reduce concurrent agents")
+
+    # Get LLM analysis
+    analysis_result = await chat(
+        [
+            {"role": "system", "content": "You are a GPU performance engineer. Analyze GPU metrics and provide optimization recommendations."},
+            {"role": "user", "content": f"GPU Status:\n{status}\n\nTask: {task}\n\nProvide 3-5 specific actionable recommendations to optimize GPU performance and cooling."},
+        ],
+        model=QWEN_TURBO,
+        max_tokens=512,
+    )
+
+    # Check after if we made changes
+    after_status = get_gpu_status() if suggestions else status
+    after_temp = after_status.get("temperature_c", before_temp)
 
     return {
-        "status": "diagnostic_complete",
-        "vram": vram,
-        "thermal": thermal,
-        "utilization": util,
-        "recommendation": "Run with specific optimization goal for targeted advice",
+        "status": "ok",
+        "gpu_available": True,
+        "before": {
+            "temperature_c": before_temp,
+            "utilization_pct": status["utilization_pct"],
+            "vram_pct": status["vram_pct"],
+            "is_throttling": status.get("is_throttling", False),
+        },
+        "after": {
+            "temperature_c": after_temp,
+            "utilization_pct": after_status["utilization_pct"],
+        },
+        "temperature_delta_c": after_temp - before_temp,
+        "thermal_pressure": status["thermal_pressure"],
+        "suggestions": suggestions,
+        "llm_analysis": analysis_result["content"],
+        "gpu_name": status["name"],
     }
-
-
-async def run(description: str, context: dict = None) -> dict:
-    return await GPUTuner.run(description, context)
