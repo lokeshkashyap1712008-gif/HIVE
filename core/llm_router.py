@@ -4,7 +4,6 @@ Auto-switches between Qwen Cloud (DashScope) and local Ollama
 All agents call llm_router.chat() — never call providers directly
 """
 
-import os
 import logging
 from typing import Optional
 
@@ -14,7 +13,20 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ─── Cloud ──────────────────────────────────────────────────────────────────
+# ─── DashScope Model Names (your available models) ──────────────────────────
+#
+# Use these when calling chat(..., model=XXX)
+# Default is QWEN_MAX for quality, QWEN_TURBO for speed
+#
+QWEN_TURBO   = "qwen-flash-2025-07-28"        # fastest — workers, pings, safety
+QWEN_PLUS    = "qwen-plus-latest"              # medium — report, data analysis
+QWEN_MAX     = "qwen-max"                      # best quality — leader decisions
+QWEN_CODER   = "qwen3-coder-plus-2025-07-22"   # code — Code Architect
+QWEN_REASON  = "qwen3-max-2025-09-23"          # best reasoning — Judge, conflicts
+QWEN_VISION  = "qwen-vl-plus-2025-08-15"        # vision + text
+
+
+# ─── Cloud (DashScope) ───────────────────────────────────────────────────────
 
 async def chat_cloud(
     messages: list[dict],
@@ -22,31 +34,34 @@ async def chat_cloud(
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> dict:
-    """Call Qwen Max via DashScope API."""
-    import dashscope
+    """Call Qwen via DashScope API."""
+    try:
+        import dashscope
+    except ImportError:
+        raise RuntimeError("dashscope not installed. Run: pip install dashscope")
+
     dashscope.api_key = settings.DASHSCOPE_API_KEY
 
-    response = dashscope.MultiModelConversational.call(
+    response = dashscope.MultiModalConversation.call(
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        result_format="message",
     )
 
     if response.status_code != 200:
-        raise RuntimeError(f"DashScope error {response.status_code}: {response.message}")
+        raise RuntimeError(f"DashScope error {response.status_code}: {getattr(response, 'message', response)}")
 
     msg = response.output.choices[0].message
     return {
-        "content": msg.content,
+        "content": msg.get("content", "") if hasattr(msg, "get") else str(msg),
         "model": model,
         "provider": "cloud",
-        "tokens": getattr(response.usage, "total_tokens", 0),
+        "tokens": getattr(response.usage, "total_tokens", 0) if hasattr(response, "usage") else 0,
     }
 
 
-# ─── Local (Ollama) ──────────────────────────────────────────────────────────
+# ─── Local (Ollama) ─────────────────────────────────────────────────────────
 
 async def chat_local(
     messages: list[dict],
@@ -72,7 +87,7 @@ async def chat_local(
             resp.raise_for_status()
             data = resp.json()
         except httpx.TimeoutException:
-            raise RuntimeError(f"Ollama timed out for model '{model}' after 30s. Try a lighter model (qwen2.5:7b) or increase timeout.")
+            raise RuntimeError(f"Ollama timed out for model '{model}' after 30s. Try qwen2.5:7b instead.")
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"Ollama HTTP error {e.response.status_code}: {e.response.text[:200]}")
 
@@ -84,50 +99,45 @@ async def chat_local(
     }
 
 
-# ─── Router ─────────────────────────────────────────────────────────────────
+# ─── Router (main entry point) ──────────────────────────────────────────────
 
 async def chat(
     messages: list[dict],
     model: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
-    quality_mode: bool = False,
+    quality: bool = False,
 ) -> dict:
     """
     Main entry point for ALL LLM calls.
-    Auto-selects cloud vs local based on DASHSCOPE_API_KEY presence.
-    
+
     Args:
-        messages: OpenAI-style message list [{"role": "user", "content": "..."}]
-        model: Override model name (default: auto based on quality_mode)
-        temperature: 0.0 = deterministic, 0.7 = balanced, 1.0 = creative
+        messages: [{"role": "user", "content": "..."}]
+        model: Override model name (use QWEN_* constants above)
+        temperature: 0.0=deterministic, 0.7=balanced, 1.0=creative
         max_tokens: Max tokens to generate
-        quality_mode: True = use larger/better model for critical tasks
+        quality: True → use QWEN_MAX ("qwen-max") for quality tasks
+
+    Returns:
+        {"content": str, "model": str, "provider": "cloud"|"local", "tokens": int}
     """
     if settings.uses_cloud:
-        cloud_model = "qwen-max"
-        if quality_mode:
-            cloud_model = "qwen-long"  # better for complex reasoning
-        logger.debug(f"[LLM] → DashScope ({cloud_model})")
-        return await chat_cloud(messages, model=cloud_model, temperature=temperature, max_tokens=max_tokens)
+        selected = model or (QWEN_MAX if quality else QWEN_TURBO)
+        logger.debug(f"[LLM] → DashScope ({selected})")
+        return await chat_cloud(messages, model=selected, temperature=temperature, max_tokens=max_tokens)
     else:
-        local_model = settings.OLLAMA_LARGE_MODEL if quality_mode else settings.OLLAMA_MODEL
+        local_model = model or settings.OLLAMA_MODEL
         logger.debug(f"[LLM] → Ollama ({local_model})")
         return await chat_local(messages, model=local_model, temperature=temperature, max_tokens=max_tokens)
 
 
-async def initialize():
-    """Called at startup to verify LLM connectivity."""
+async def initialize() -> bool:
+    """Called at startup to verify LLM connectivity. Returns True if successful."""
     test_messages = [{"role": "user", "content": "Reply with just the word OK."}]
     try:
-        result = await chat(test_messages, max_tokens=10)
-        logger.info(f"LLM initialized: provider={result['provider']}, model={result['model']}")
+        result = await chat(test_messages, model=QWEN_TURBO, max_tokens=10)
+        logger.info(f"LLM ready: provider={result['provider']}, model={result['model']}")
+        return True
     except Exception as e:
-        logger.warning(f"LLM initialization failed: {e}. Will retry on first call.")
-
-
-# ─── Per-agent model hints ───────────────────────────────────────────────────
-# Use these via quality_mode=True for critical agents (Leader, Safety, Judge)
-
-QUALITY_MODELS = {"leader", "safety", "judge"}
-FAST_MODELS = {"web_scout", "report_agent", "diagnostician", "communicator"}
+        logger.warning(f"LLM init failed: {e}. Will retry on first call.")
+        return False

@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Optional
 
-from core.llm_router import chat, QUALITY_MODELS
+from core.llm_router import chat
 from core.memory_manager import memory_manager
 from core.task_queue import task_queue, Task, SubTask, TaskStatus, Priority
 from core.audit_logger import audit_logger

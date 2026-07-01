@@ -15,7 +15,7 @@ import uuid
 import time
 
 from core.config import settings
-from core.llm_router import chat as llm_chat, initialize as llm_init
+from core.llm_router import chat, initialize
 from core.memory_manager import memory_manager
 from core.audit_logger import audit_logger
 from core.task_queue import task_queue, Task, TaskStatus
@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Max concurrent agents: {settings.MAX_CONCURRENT_AGENTS}")
     
     # Initialize LLM router
-    await llm_init()
+    await initialize()
     
     # Start cleanup crew background task
     cleanup_task = asyncio.create_task(cleanup_crew_loop())
