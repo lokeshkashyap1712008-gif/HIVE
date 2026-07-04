@@ -15,15 +15,21 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 # ─── DashScope Model Names ───────────────────────────────────────────────────
-# These models are available on your DashScope account
+# Real DashScope model names — DO NOT use qwen3.7-plus (doesn't exist)
 #
-# Usage: chat(messages, model=QWEN_TURBO)  etc.
+# Model selection strategy:
+# - qwen-turbo: fastest, good for workers, pings, safety checks (100k tokens/sec)
+# - qwen-plus:  medium quality, good for report, data analysis
+# - qwen-max:   best quality, for leader decisions, judge, conflict resolution
+# - qwen-coder: code-specific, for Code Architect
+# - qwen-reasoner: advanced reasoning, for Judge and high-stakes debates
 #
-QWEN_TURBO   = "qwen3.7-plus"              # fastest — workers, pings, safety
-QWEN_PLUS    = "qwen3.7-plus"              # medium — report, data analysis
-QWEN_MAX     = "qwen3.7-plus"              # best quality — leader decisions
-QWEN_CODER   = "qwen3.7-plus"              # code — Code Architect
-QWEN_REASON  = "qwen3.7-plus"              # best reasoning — Judge, conflicts
+# Check available models: https://help.aliyun.com/article/2413498
+QWEN_TURBO   = "qwen-turbo"       # fastest — workers, pings, safety
+QWEN_PLUS    = "qwen-plus"       # medium — report, data analysis
+QWEN_MAX     = "qwen-max"         # best quality — leader decisions
+QWEN_CODER   = "qwen-coder"      # code — Code Architect
+QWEN_REASON  = "qwen-reasoner"   # best reasoning — Judge, conflicts
 
 # Default to qwen-max for the leader
 DEFAULT_MODEL = QWEN_MAX
@@ -40,23 +46,31 @@ def get_cloud_client() -> OpenAI:
 
 async def chat_cloud(
     messages: list[dict],
-    model: str = "qwen3.7-plus",
+    model: str = "qwen-plus",
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> dict:
-    """Call Qwen via DashScope OpenAI-compatible API."""
-    client = get_cloud_client()
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
+    """Call Qwen via DashScope OpenAI-compatible API (async using httpx)."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
+    def _sync_call():
+        client = get_cloud_client()
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    
+    # Run synchronous OpenAI call in thread pool to avoid blocking
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        response = await loop.run_in_executor(pool, _sync_call)
+    
     choice = response.choices[0]
     content = choice.message.content or ""
-
+    
     return {
         "content": content,
         "model": model,

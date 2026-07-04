@@ -1,0 +1,12 @@
+{
+  "agent_id": "report_agent",
+  "archived_at": 1783103236.4357495,
+  "tasks_completed": 0,
+  "tasks_failed": 0,
+  "reputation": 0.7,
+  "accuracy_rate": 0.7,
+  "confidence_history": [],
+  "stress_history": [],
+  "emotional_state": "calm",
+  "last_update": 1783101624.0241723
+}

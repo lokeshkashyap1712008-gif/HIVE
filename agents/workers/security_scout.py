@@ -1,216 +1,306 @@
 """
-HIVE — Security Scout Agent
-OWASP Top 10 vulnerability scanning, CVE detection, security assessment.
-Accepts URL or code repository path. Returns structured security report.
+HIVE OS - Security Scout Agent
+OWASP Top 10 scanning, SQL injection, XSS, port scanning, header checks.
 """
 
 import re
 import socket
 import subprocess
-import logging
-from typing import Optional
-
-import httpx
-
-from core.llm_router import chat, QWEN_TURBO
-
-logger = logging.getLogger(__name__)
+import asyncio
+from typing import Dict, List, Optional
+from dataclasses import dataclass
 
 
-async def _check_sql_injection(url: str) -> dict:
-    """Test for SQL injection vulnerability."""
-    test_payloads = ["' OR 1=1--", "'; DROP TABLE users--", "' OR 'a'='a"]
-    vulnerable = False
-    details = []
-
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for payload in test_payloads:
-            try:
-                # Try in common param names
-                for param in ["id", "user", "q", "search", "query"]:
-                    test_url = f"{url}?{param}={payload}"
-                    resp = await client.get(test_url, timeout=5.0)
-                    text = resp.text.lower()
-                    # Check for SQL error signatures
-                    if any(err in text for err in ["sql", "syntax error", "mysql", "postgresql", "ora-", "sqlite"]):
-                        vulnerable = True
-                        details.append(f"SQL injection possible via param '{param}' with payload: {payload}")
-                        break
-            except Exception:
-                pass
-
-    return {"test": "sql_injection", "vulnerable": vulnerable, "details": details, "severity": "critical" if vulnerable else "info"}
+@dataclass
+class Vulnerability:
+    severity: str  # critical, high, medium, low, info
+    category: str
+    description: str
+    file_path: str = ""
+    line_number: int = 0
+    recommendation: str = ""
 
 
-async def _check_xss(url: str) -> dict:
-    """Test for XSS vulnerability."""
-    payloads = ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "javascript:alert(1)"]
-    vulnerable = False
-    details = []
-
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for payload in payloads:
-            try:
-                for param in ["q", "search", "name", "input"]:
-                    test_url = f"{url}?{param}={payload}"
-                    resp = await client.get(test_url, timeout=5.0)
-                    if payload in resp.text:
-                        vulnerable = True
-                        details.append(f"XSS via param '{param}' with payload: {payload}")
-                        break
-            except Exception:
-                pass
-
-    return {"test": "xss", "vulnerable": vulnerable, "details": details, "severity": "high" if vulnerable else "info"}
-
-
-def _check_open_ports(host: str, ports: Optional[list[int]] = None) -> dict:
-    """Check if common ports are open."""
-    if ports is None:
-        ports = [21, 22, 23, 25, 80, 443, 445, 1433, 3306, 5432, 6379, 27017]
+class SecurityScout:
+    """Security analysis agent for OWASP Top 10 and common vulnerabilities"""
     
-    open_ports = []
-    try:
-        for port in ports:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            if result == 0:
-                open_ports.append(port)
-    except Exception:
-        pass
-
-    service_names = {21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 80: "HTTP", 443: "HTTPS",
-                     445: "SMB", 1433: "MSSQL", 3306: "MySQL", 5432: "PostgreSQL",
-                     6379: "Redis", 27017: "MongoDB"}
-    risky = [p for p in open_ports if p in [21, 23, 25, 445, 3306, 5432, 6379, 27017, 1433]]
+    # OWASP patterns
+    SQL_INJECTION_PATTERNS = [
+        r'(?i)(SELECT|INSERT|UPDATE|DELETE|DROP)\s+.*\s+FROM\s+.*\s+WHERE\s+.*["\']?\s*\+',
+        r'(?i)execute\s*\(\s*["\'].*\+',
+        r'(?i)cursor\.execute\s*\(\s*["\'].*%',
+        r'(?i)f["\'].*SELECT.*FROM.*WHERE',
+    ]
     
-    return {
-        "test": "open_ports",
-        "open_ports": [{port: service_names.get(port, "unknown")} for port in open_ports],
-        "risky_services": risky,
-        "severity": "medium" if risky else "low",
-    }
-
-
-async def _check_cve_scan(packages: list[str]) -> dict:
-    """Check known CVEs for given packages."""
-    vulnerabilities = []
+    XSS_PATTERNS = [
+        r'(?i)innerHTML\s*=',
+        r'(?i)document\.write\s*\(',
+        r'(?i)\.html\s*\(\s*['""][^""]*\+',
+        r'(?i)v-html\s*=',
+        r'(?i)dangerouslySetInnerHTML',
+    ]
     
-    # For each package, do a quick web search for recent CVEs
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for pkg in packages[:5]:  # Limit to 5 packages for speed
-            try:
-                # Search for CVE info (in real implementation, use a CVE database API)
-                # This is a simplified version
-                resp = await client.get(
-                    f"https://sources.android.com/component/component/?name={pkg}",
-                    timeout=3.0,
-                )
-            except Exception:
-                pass
+    HARDCODED_SECRET_PATTERNS = [
+        r'(?i)(api[_-]?key|apikey)\s*[:=]\s*["\'][a-zA-Z0-9\-_]{20,}["\']',
+        r'(?i)(secret|password|passwd|pwd)\s*[:=]\s*["\'][^\s"\']{6,}["\']',
+        r'(?i)(token|auth)\s*[:=]\s*["\'][a-zA-Z0-9\-_\.]{20,}["\']',
+        r'(?i)Bearer\s+[a-zA-Z0-9\-_\.]{20,}',
+        r'-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----',
+    ]
     
-    return {"test": "cve_scan", "vulnerabilities": vulnerabilities, "severity": "info"}
-
-
-async def _check_headers(url: str) -> dict:
-    """Check security headers."""
-    missing_headers = []
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+    INSECURE_DESERIALIZATION = [
+        r'(?i)pickle\.loads?\s*\(',
+        r'(?i)yaml\.load\s*\([^)]*\)',
+        r'(?i)marshal\.loads?\s*\(',
+        r'(?i)eval\s*\(',
+        r'(?i)exec\s*\(',
+    ]
+    
+    def __init__(self):
+        self.findings: List[Vulnerability] = []
+    
+    async def run(self, task: str) -> dict:
+        """Main entry point for security analysis"""
+        self.findings = []
+        
+        # Parse task for target
+        target = self._extract_target(task)
+        
+        if target.endswith('.py') or target.endswith('.js') or target.endswith('.html'):
+            await self._scan_file(target)
+        elif ':' in target:
+            await self._scan_port(target)
+        else:
+            await self._scan_directory(target)
+        
+        return self._compile_results()
+    
+    def _extract_target(self, task: str) -> str:
+        """Extract target from task description"""
+        # Try to find file path
+        path_match = re.search(r'[\w/\\\.]+\.(py|js|html|json|yaml|yml)', task)
+        if path_match:
+            return path_match.group(0)
+        
+        # Try to find directory
+        dir_match = re.search(r'(?:directory|folder|path)\s+[:=]?\s*([^\s]+)', task, re.IGNORECASE)
+        if dir_match:
+            return dir_match.group(1)
+        
+        # Default to current directory
+        return "."
+    
+    async def _scan_file(self, file_path: str):
+        """Scan a single file for vulnerabilities"""
         try:
-            resp = await client.get(url, timeout=5.0)
-            headers = {k.lower(): v for k, v in resp.headers.items()}
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                lines = content.split('\n')
             
-            security_headers = {
-                "strict-transport-security": "HSTS",
-                "content-security-policy": "CSP",
-                "x-content-type-options": "X-Content-Type",
-                "x-frame-options": "X-Frame-Options",
-                "x-xss-protection": "X-XSS-Protection",
-            }
+            # Check for SQL injection
+            for i, line in enumerate(lines, 1):
+                for pattern in self.SQL_INJECTION_PATTERNS:
+                    if re.search(pattern, line):
+                        self.findings.append(Vulnerability(
+                            severity="high",
+                            category="A03:2021 - Injection",
+                            description="Potential SQL injection vulnerability",
+                            file_path=file_path,
+                            line_number=i,
+                            recommendation="Use parameterized queries instead of string concatenation"
+                        ))
+                        break
             
-            for header, name in security_headers.items():
-                if header not in headers:
-                    missing_headers.append(name)
+            # Check for XSS
+            for i, line in enumerate(lines, 1):
+                for pattern in self.XSS_PATTERNS:
+                    if re.search(pattern, line):
+                        self.findings.append(Vulnerability(
+                            severity="high",
+                            category="A03:2021 - Injection",
+                            description="Potential Cross-Site Scripting (XSS) vulnerability",
+                            file_path=file_path,
+                            line_number=i,
+                            recommendation="Sanitize user input and use content security policy"
+                        ))
+                        break
+            
+            # Check for hardcoded secrets
+            for i, line in enumerate(lines, 1):
+                for pattern in self.HARDCODED_SECRET_PATTERNS:
+                    if re.search(pattern, line):
+                        self.findings.append(Vulnerability(
+                            severity="critical",
+                            category="A02:2021 - Cryptographic Failures",
+                            description="Hardcoded secret or API key detected",
+                            file_path=file_path,
+                            line_number=i,
+                            recommendation="Move secrets to environment variables or secure vault"
+                        ))
+                        break
+            
+            # Check for insecure deserialization
+            for i, line in enumerate(lines, 1):
+                for pattern in self.INSECURE_DESERIALIZATION:
+                    if re.search(pattern, line):
+                        self.findings.append(Vulnerability(
+                            severity="high",
+                            category="A08:2021 - Software and Data Integrity Failures",
+                            description="Potential insecure deserialization",
+                            file_path=file_path,
+                            line_number=i,
+                            recommendation="Avoid deserializing untrusted data; use safe alternatives"
+                        ))
+                        break
+            
+            # Check for missing security headers in HTML
+            if file_path.endswith('.html'):
+                self._check_security_headers(content, file_path)
+            
         except Exception as e:
-            return {"test": "security_headers", "error": str(e), "severity": "info"}
-
-    return {
-        "test": "security_headers",
-        "missing_headers": missing_headers,
-        "severity": "medium" if len(missing_headers) > 2 else "low",
-    }
-
-
-async def run(task: str) -> dict:
-    """
-    Full security scan.
-    Task should contain a URL or be a security scan request.
-    """
-    # Extract URL from task
-    url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', task)
-    if not url_match:
-        # Use LLM to figure out what to scan
-        result = await chat(
-            [{"role": "system", "content": "Extract any URL or hostname from the text. Reply with just the URL or hostname."},
-             {"role": "user", "content": task}],
-            model=QWEN_TURBO,
-            max_tokens=128,
-        )
-        url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', result["content"])
-
-    if not url_match:
-        return {"status": "error", "message": "No URL or hostname found in task"}
-
-    url = url_match.group(0).rstrip("/")
-    host = url.split("://")[1].split("/")[0]
-
-    # Run all checks in parallel
-    sql_result, xss_result, port_result, header_result = await asyncio.gather(
-        _check_sql_injection(url),
-        _check_xss(url),
-        asyncio.to_thread(_check_open_ports, host),
-        _check_headers(url),
-    )
-
-    all_results = [sql_result, xss_result, port_result, header_result]
-
-    # Calculate overall severity
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    findings = [r for r in all_results if r.get("vulnerable") or r.get("missing_headers")]
-    if findings:
-        max_severity = min(findings, key=lambda x: severity_order.get(x.get("severity", "info"), 4))
-        overall = max_severity.get("severity", "low")
-    else:
-        overall = "info"
-
-    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for r in all_results:
-        sev = r.get("severity", "info")
-        if sev in severity_counts:
-            severity_counts[sev] += 1
-
-    # LLM summary
-    summary_result = await chat(
-        [{"role": "system", "content": "You are a security analyst. Summarize the security scan results concisely."},
-         {"role": "user", "content": f"URL: {url}\nResults: {all_results}\n\nGive a brief executive summary and top 3 prioritized recommendations."}],
-        model=QWEN_TURBO,
-        max_tokens=512,
-    )
-
-    return {
-        "status": "ok",
-        "url": url,
-        "overall_severity": overall,
-        "severity_counts": severity_counts,
-        "vulnerabilities": all_results,
-        "scan_summary": summary_result["content"],
-        "compliance": {
-            "owasp_top_10_covered": ["A01", "A05", "A07"],  # Injection, Security Misconfig, Identification/Failures
-            "missing_security_headers": header_result.get("missing_headers", []),
-        },
-    }
-
-
-import asyncio  # needed for gather
+            self.findings.append(Vulnerability(
+                severity="info",
+                category="Scan Error",
+                description=f"Could not scan file: {str(e)}"
+            ))
+    
+    def _check_security_headers(self, content: str, file_path: str):
+        """Check HTML for security headers"""
+        required_headers = [
+            'Content-Security-Policy',
+            'X-Content-Type-Options',
+            'X-Frame-Options',
+            'X-XSS-Protection',
+        ]
+        
+        for header in required_headers:
+            if header.lower() not in content.lower():
+                self.findings.append(Vulnerability(
+                    severity="medium",
+                    category="A05:2021 - Security Misconfiguration",
+                    description=f"Missing security header: {header}",
+                    file_path=file_path,
+                    recommendation=f"Add {header} header to improve security"
+                ))
+    
+    async def _scan_port(self, target: str):
+        """Scan ports on a target"""
+        host, port_range = target.split(':')
+        ports = self._parse_port_range(port_range)
+        
+        open_ports = []
+        for port in ports:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((host, port))
+                if result == 0:
+                    open_ports.append(port)
+                sock.close()
+            except:
+                pass
+        
+        if open_ports:
+            self.findings.append(Vulnerability(
+                severity="medium",
+                category="A05:2021 - Security Misconfiguration",
+                description=f"Open ports detected: {open_ports}",
+                recommendation="Review and close unnecessary ports"
+            ))
+        
+        # Check for common insecure ports
+        insecure_ports = {21: 'FTP', 23: 'Telnet', 25: 'SMTP', 135: 'RPC', 445: 'SMB'}
+        for port in open_ports:
+            if port in insecure_ports:
+                self.findings.append(Vulnerability(
+                    severity="high",
+                    category="A05:2021 - Security Misconfiguration",
+                    description=f"Insecure service running: {insecure_ports[port]} on port {port}",
+                    recommendation=f"Disable {insecure_ports[port]} or replace with secure alternative"
+                ))
+    
+    def _parse_port_range(self, port_range: str) -> List[int]:
+        """Parse port range string like '80,443,8000-8100'"""
+        ports = []
+        for part in port_range.split(','):
+            if '-' in part:
+                start, end = part.split('-')
+                ports.extend(range(int(start), int(end) + 1))
+            else:
+                ports.append(int(part))
+        return ports
+    
+    async def _scan_directory(self, directory: str):
+        """Scan a directory for vulnerabilities"""
+        import os
+        
+        if not os.path.exists(directory):
+            self.findings.append(Vulnerability(
+                severity="info",
+                category="Scan Error",
+                description=f"Directory not found: {directory}"
+            ))
+            return
+        
+        for root, dirs, files in os.walk(directory):
+            # Skip hidden and common non-code directories
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', '__pycache__', 'venv']]
+            
+            for file in files:
+                if file.endswith(('.py', '.js', '.ts', '.html', '.yaml', '.yml', '.json')):
+                    file_path = os.path.join(root, file)
+                    await self._scan_file(file_path)
+    
+    def _compile_results(self) -> dict:
+        """Compile scan results"""
+        severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+        for finding in self.findings:
+            severity_counts[finding.severity] = severity_counts.get(finding.severity, 0) + 1
+        
+        return {
+            'total_findings': len(self.findings),
+            'severity_summary': severity_counts,
+            'findings': [
+                {
+                    'severity': f.severity,
+                    'category': f.category,
+                    'description': f.description,
+                    'file_path': f.file_path,
+                    'line_number': f.line_number,
+                    'recommendation': f.recommendation
+                }
+                for f in self.findings
+            ],
+            'risk_level': 'critical' if severity_counts['critical'] > 0 else
+                         'high' if severity_counts['high'] > 0 else
+                         'medium' if severity_counts['medium'] > 0 else
+                         'low' if severity_counts['low'] > 0 else 'info'
+        }
+    
+    def get_owasp_report(self) -> dict:
+        """Get OWASP Top 10 categorized report"""
+        owasp_categories = {}
+        for finding in self.findings:
+            cat = finding.category
+            if cat not in owasp_categories:
+                owasp_categories[cat] = []
+            owasp_categories[cat].append(finding)
+        
+        return {
+            'categories_found': len(owasp_categories),
+            'categories': {
+                cat: {
+                    'count': len(findings),
+                    'findings': [
+                        {
+                            'severity': f.severity,
+                            'description': f.description,
+                            'file_path': f.file_path,
+                            'line_number': f.line_number
+                        }
+                        for f in findings
+                    ]
+                }
+                for cat, findings in owasp_categories.items()
+            }
+        }

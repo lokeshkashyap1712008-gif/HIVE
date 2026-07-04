@@ -40,7 +40,7 @@ async def run_single_agent(task_description: str) -> dict:
         {"role": "user", "content": task_description},
     ]
     try:
-        result = await chat(messages, quality_mode=False, max_tokens=512)
+        result = await chat(messages, quality=False, max_tokens=512)
         elapsed = time.time() - start
         return {
             "status": "success",
@@ -54,14 +54,14 @@ async def run_single_agent(task_description: str) -> dict:
 
 
 async def run_multi_agent(task_description: str) -> dict:
-    """Run one task as multi-agent swarm."""
+    """Run one task as multi-agent swarm (leader decomposes, agents execute)."""
     start = time.time()
     messages = [
         {"role": "system", "content": "You are HIVE's Leader. Decompose this task into 1-3 sub-tasks and execute them via specialized agents. Be efficient."},
         {"role": "user", "content": task_description},
     ]
     try:
-        result = await chat(messages, quality_mode=True, max_tokens=512)
+        result = await chat(messages, quality=True, max_tokens=512)
         elapsed = time.time() - start
         return {
             "status": "success",
