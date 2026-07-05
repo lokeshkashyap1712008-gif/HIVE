@@ -2,6 +2,7 @@
 
 import json
 import uuid
+import asyncio
 from hive.llm import QwenClient
 from hive.runtime import AgentRuntime
 from hive.creator import CreatorAgent
@@ -21,6 +22,12 @@ If you need a specialized agent that doesn't exist, describe what agent you need
 Be concise. Don't explain what you're about to do — just do it.
 Only explain when the task is complete."""
 
+SWARM_KEYWORDS = [
+    "swarm", "agents", "decompose", "orchestrat", "multi-agent",
+    "security scan", "code review", "threat model", "red team",
+    "gpu tune", "data analy", "report gen",
+]
+
 
 class Leader:
     """Orchestrates tasks, spawns agents, manages execution."""
@@ -30,6 +37,25 @@ class Leader:
         self.runtime = AgentRuntime(llm)
         self.creator = CreatorAgent(llm)
 
+    def _should_use_swarm(self, message: str) -> bool:
+        msg_lower = message.lower()
+        return any(kw in msg_lower for kw in SWARM_KEYWORDS)
+
+    async def _run_swarm_task(self, message: str) -> str:
+        """Run a task through the HIVE swarm pipeline."""
+        try:
+            from hive.agents.leader import run_swarm
+            result = await run_swarm(message)
+            synthesis = result.get("synthesis", "Task completed.")
+            subtask_count = len(result.get("subtasks", []))
+            worker_count = len(result.get("results", []))
+            return (
+                f"Swarm completed: {subtask_count} subtasks dispatched to {worker_count} workers.\n\n"
+                f"{synthesis}"
+            )
+        except Exception as e:
+            return f"Swarm error: {e}. Falling back to single-agent mode."
+
     async def handle_message(self, user_message: str,
                              session_id: str,
                              memory,
@@ -38,17 +64,21 @@ class Leader:
                              on_permission=None,
                              on_text=None) -> str:
         """Process a user message end-to-end."""
-        # Add user message to memory
         memory.add_message("user", user_message)
 
-        # Build context
+        # Check if swarm should handle this
+        if self._should_use_swarm(user_message):
+            response = await self._run_swarm_task(user_message)
+            memory.add_message("assistant", response)
+            return response
+
+        # Standard single-agent path
         system = {
             "role": "system",
             "content": SYSTEM_PROMPT,
         }
         context_messages = [system] + memory.get_context_window()
 
-        # Run agent loop
         response = await self.runtime.run_loop(
             session_id=session_id,
             messages=context_messages,
@@ -57,20 +87,16 @@ class Leader:
             on_text=on_text,
         )
 
-        # Add response to memory
         memory.add_message("assistant", response)
-
         return response
 
     async def spawn_agent(self, agent_name: str, task: str,
                           context: dict = None) -> dict:
         """Spawn a worker agent."""
-        # Load agent code
         code = await self.creator.load_agent(agent_name)
         if not code:
             return {"error": f"Agent not found: {agent_name}"}
 
-        # Run in separate process
         result = await self.runtime.run_agent(
             agent_code=code,
             task=task,
@@ -81,7 +107,6 @@ class Leader:
     async def create_and_spawn(self, name: str, description: str,
                                task: str, tools: list[str] = None) -> dict:
         """Create a new agent and run it."""
-        # Generate agent
         result = await self.creator.create_agent(
             name=name,
             description=description,
@@ -91,7 +116,6 @@ class Leader:
         if "error" in result:
             return result
 
-        # Spawn it
         spawn_result = await self.spawn_agent(name, task)
         return {
             "created": result,
