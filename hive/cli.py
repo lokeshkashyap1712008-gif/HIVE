@@ -221,9 +221,6 @@ class HiveCLI:
 
     async def _run_test_mode(self):
         """Run in test mode with mock responses."""
-        from hive.tools import TOOLS
-        from hive.runtime import AgentRuntime
-
         # Mock LLM
         class MockLLM:
             def build_tools_schema(self, tools):
