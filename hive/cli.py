@@ -243,18 +243,55 @@ class HiveCLI:
             console.print()
 
         elif command == "/agents":
-            agents = await list_agents(self.db)
-            if not agents:
-                console.print("[dim]No agents registered.[/dim]\n")
-                return
-            table = _table("Registered Agents")
-            table.add_column("Name", style="agent")
-            table.add_column("Tier", style="yellow")
-            table.add_column("Uses", style="dim", justify="right")
-            for a in agents:
-                table.add_row(a["name"], a["risk_tier"], str(a["use_count"]))
-            console.print(table)
-            console.print()
+            try:
+                from hive.agents.agent_forge import AGENT_REGISTRY, temporary_agents
+
+                core_agents = [
+                    agent_id for agent_id, info in AGENT_REGISTRY.items()
+                    if info.get("type") == "core"
+                ]
+                worker_agents = [
+                    agent_id for agent_id, info in AGENT_REGISTRY.items()
+                    if info.get("type") == "worker"
+                ]
+                temp_agents = [
+                    (agent_id, temporary_agents[agent_id])
+                    for agent_id in temporary_agents
+                ]
+
+                if not core_agents and not worker_agents and not temp_agents:
+                    console.print("[dim]No swarm agents registered.[/dim]\n")
+                    return
+
+                table = _table("Agent Swarm")
+                table.add_column("Group", style="agent")
+                table.add_column("Name", style="white")
+                table.add_column("Details", style="dim")
+
+                for agent_id in core_agents:
+                    table.add_row("Core", agent_id, "permanent")
+                for agent_id in worker_agents:
+                    table.add_row("Worker", agent_id, "permanent")
+                for agent_id, info in temp_agents:
+                    name = info.get("name", agent_id)
+                    details = info.get("purpose", "temporary agent")
+                    table.add_row("Dynamic", name, details)
+
+                console.print(table)
+                console.print()
+            except Exception:
+                agents = await list_agents(self.db)
+                if not agents:
+                    console.print("[dim]No agents registered.[/dim]\n")
+                    return
+                table = _table("Registered Agents")
+                table.add_column("Name", style="agent")
+                table.add_column("Tier", style="yellow")
+                table.add_column("Uses", style="dim", justify="right")
+                for agent in agents:
+                    table.add_row(agent["name"], agent["risk_tier"], str(agent["use_count"]))
+                console.print(table)
+                console.print()
 
         elif command == "/skills":
             skills = await list_skills(self.db)
