@@ -6,6 +6,9 @@ import time
 import json
 from pathlib import Path
 import httpx
+from rich.console import Console
+
+console = Console()
 
 
 # Tool registry with schemas for LLM function calling
@@ -82,36 +85,42 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
     """Execute a tool and return result."""
     start = time.time()
     try:
-        if tool_name == "read_file":
-            result = await _read_file(kwargs["path"])
-        elif tool_name == "list_directory":
-            result = await _list_directory(kwargs["path"])
-        elif tool_name == "search_content":
-            result = await _search_content(
-                kwargs["pattern"], kwargs["path"], kwargs.get("include", "*")
-            )
-        elif tool_name == "edit_file":
-            result = await _edit_file(kwargs["path"], kwargs["old"], kwargs["new"])
-        elif tool_name == "write_file":
-            result = await _write_file(kwargs["path"], kwargs["content"])
-        elif tool_name == "run_command":
-            result = await _run_command(
-                kwargs["command"], kwargs.get("workdir", None)
-            )
-        elif tool_name == "git_status":
-            result = await _run_command("git status")
-        elif tool_name == "git_diff":
-            target = kwargs.get("target", "")
-            cmd = f"git diff {target}".strip()
-            result = await _run_command(cmd)
-        elif tool_name == "git_commit":
-            files = kwargs.get("files", ".")
-            await _run_command(f"git add {files}")
-            result = await _run_command(f'git commit -m "{kwargs["message"]}"')
-        elif tool_name == "web_fetch":
-            result = await _web_fetch(kwargs["url"])
-        else:
-            result = {"error": f"Unknown tool: {tool_name}"}
+        detail = kwargs.get("path", kwargs.get("url", kwargs.get("command", "")))
+        status_text = f"[dim]{tool_name}[/dim]"
+        if detail:
+            status_text += f" [dim]({detail[:40]})[/dim]"
+
+        with console.status(status_text, spinner="dots"):
+            if tool_name == "read_file":
+                result = await _read_file(kwargs["path"])
+            elif tool_name == "list_directory":
+                result = await _list_directory(kwargs["path"])
+            elif tool_name == "search_content":
+                result = await _search_content(
+                    kwargs["pattern"], kwargs["path"], kwargs.get("include", "*")
+                )
+            elif tool_name == "edit_file":
+                result = await _edit_file(kwargs["path"], kwargs["old"], kwargs["new"])
+            elif tool_name == "write_file":
+                result = await _write_file(kwargs["path"], kwargs["content"])
+            elif tool_name == "run_command":
+                result = await _run_command(
+                    kwargs["command"], kwargs.get("workdir", None)
+                )
+            elif tool_name == "git_status":
+                result = await _run_command("git status")
+            elif tool_name == "git_diff":
+                target = kwargs.get("target", "")
+                cmd = f"git diff {target}".strip()
+                result = await _run_command(cmd)
+            elif tool_name == "git_commit":
+                files = kwargs.get("files", ".")
+                await _run_command(f"git add {files}")
+                result = await _run_command(f'git commit -m "{kwargs["message"]}"')
+            elif tool_name == "web_fetch":
+                result = await _web_fetch(kwargs["url"])
+            else:
+                result = {"error": f"Unknown tool: {tool_name}"}
 
         duration_ms = int((time.time() - start) * 1000)
         result["duration_ms"] = duration_ms

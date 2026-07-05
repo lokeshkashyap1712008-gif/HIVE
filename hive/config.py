@@ -62,6 +62,9 @@ DENIED_PATHS = [
     "/etc", "/usr", "/bin", "/sbin", "/proc", "/sys",
 ]
 
+THEME_BANNER = os.environ.get("HIVE_COLOR_BANNER", "gold1")
+THEME_ACCENT = os.environ.get("HIVE_COLOR_ACCENT", "cyan")
+
 
 def ensure_dirs():
     """Create HIVE directories if they don't exist."""

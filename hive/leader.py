@@ -54,6 +54,7 @@ class Leader:
             messages=context_messages,
             on_tool_call=on_tool_call,
             on_permission=on_permission,
+            on_text=on_text,
         )
 
         # Add response to memory

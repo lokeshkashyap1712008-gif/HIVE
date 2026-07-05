@@ -20,7 +20,6 @@ def _run_agent_process(agent_code: str, task: str, context: dict) -> dict:
     except Exception as e:
         return {"error": f"Agent code execution failed: {e}"}
 
-    # Find agent class
     agent_class = None
     for name in dir(module):
         obj = getattr(module, name)
@@ -44,12 +43,14 @@ class AgentRuntime:
 
     def __init__(self, llm: QwenClient):
         self.llm = llm
-        self.executor = ProcessPoolExecutor(max_workers=MAX_AGENTS)
+        self.executor = None
         self.active = {}
 
     async def run_agent(self, agent_code: str, task: str,
                         context: dict) -> dict:
         """Run agent in separate process."""
+        if self.executor is None:
+            self.executor = ProcessPoolExecutor(max_workers=MAX_AGENTS)
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
             self.executor,
@@ -65,27 +66,26 @@ class AgentRuntime:
             return {"error": f"Agent timed out after {AGENT_TIMEOUT}s"}
 
     async def run_loop(self, session_id: str, messages: list[dict],
-                       on_tool_call=None, on_permission=None) -> str:
+                       on_tool_call=None, on_permission=None, on_text=None) -> str:
         """Main agent loop: send to LLM, execute tools, repeat."""
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
 
         while True:
-            # Call LLM
             result = await self.llm.chat(conversation, tools=tools_schema)
-            choice = result.get("choices", [{}])[0]
-            message = choice.get("message", {})
-            content = message.get("content", "")
-            tool_calls = message.get("tool_calls", [])
+            message = result.get("choices", [{}])[0].get("message") or {}
+            full_content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
 
-            # If no tool calls, return final answer
+            if full_content and on_text:
+                await on_text(full_content)
+
             if not tool_calls:
-                return content
+                return full_content or "I did not receive a response from the model."
 
-            # Add assistant message to conversation
-            conversation.append(message)
+            assistant_msg = {"role": "assistant", "content": full_content, "tool_calls": tool_calls}
+            conversation.append(assistant_msg)
 
-            # Execute each tool call
             for tc in tool_calls:
                 func = tc.get("function", {})
                 tool_name = func.get("name", "")
@@ -95,7 +95,6 @@ class AgentRuntime:
                 except json.JSONDecodeError:
                     args = {}
 
-                # Permission check
                 tier = get_tool_tier(tool_name)
                 target = args.get("path", args.get("url", args.get("command", "")))
 
@@ -126,7 +125,6 @@ class AgentRuntime:
                             })
                             continue
 
-                # Execute tool
                 if on_tool_call:
                     await on_tool_call(tool_name, args)
 
@@ -140,4 +138,5 @@ class AgentRuntime:
 
     def shutdown(self):
         """Shutdown process pool."""
-        self.executor.shutdown(wait=False)
+        if self.executor:
+            self.executor.shutdown(wait=False)

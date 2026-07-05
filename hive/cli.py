@@ -3,6 +3,7 @@
 import sys
 import uuid
 import asyncio
+import time
 from hive import __version__
 from hive.config import QWEN_MODEL, DASHSCOPE_API_KEY, ensure_dirs
 from hive.storage import (
@@ -12,50 +13,111 @@ from hive.storage import (
 from hive.memory import ShortTermMemory
 from hive.llm import QwenClient
 from hive.leader import Leader
-from hive.permissions import get_tool_tier
+from hive.theme import get_console
 
+from rich import box
+from rich.panel import Panel
+from rich.table import Table
+from rich.markdown import Markdown
+from rich.prompt import Confirm
+from rich.text import Text
+
+console = get_console()
+
+SLASH_COMMANDS = [
+    "/help", "/quit", "/exit", "/sessions", "/resume",
+    "/agents", "/skills", "/model", "/clear",
+]
 
 TEST_MODE = False
+PROMPT = "│ > "
+BANNER = [
+    "██╗  ██╗██╗██╗   ██╗███████╗",
+    "██║  ██║██║██║   ██║██╔════╝",
+    "███████║██║██║   ██║█████╗  ",
+    "██╔══██║██║╚██╗ ██╔╝██╔══╝  ",
+    "██║  ██║██║ ╚████╔╝ ███████╗",
+    "╚═╝  ╚═╝╚═╝  ╚═══╝  ╚══════╝",
+]
 
 
-def print_banner():
-    mode = " [test mode]" if TEST_MODE else ""
-    print(f"hive v{__version__} | {QWEN_MODEL}{mode} | type /help for commands\n")
+def _render_response(response: str) -> None:
+    try:
+        console.print(Markdown(response))
+    except Exception:
+        console.print(response)
 
 
-def print_help():
-    print("""
-  Commands:
-    /help           Show this help
-    /quit           Exit hive
-    /sessions       List past sessions
-    /resume <id>    Resume a session
-    /agents         List active agents
-    /skills         List learned skills
-    /model          Show current model
-    /clear          Clear screen
-""")
+def _print_banner():
+    mode = " · test mode" if TEST_MODE else ""
+    console.print()
+    for line in BANNER:
+        console.print(f"  [banner]{line}[/banner]")
+    console.print(f"  [header]HIVE Code[/header] [muted]v{__version__} · {QWEN_MODEL}{mode}[/muted]")
+    console.print("  [muted]Type[/muted] [prompt]/help[/prompt] [muted]for commands[/muted]\n")
+
+
+def _print_help():
+    help_text = (
+        "[prompt]/help[/prompt]           Show this help\n"
+        "[prompt]/quit[/prompt]           Exit hive\n"
+        "[prompt]/sessions[/prompt]       List past sessions\n"
+        "[prompt]/resume \\[id][/prompt]    Resume a session\n"
+        "[prompt]/agents[/prompt]         List active agents\n"
+        "[prompt]/skills[/prompt]         List learned skills\n"
+        "[prompt]/model[/prompt]          Show current model\n"
+        "[prompt]/clear[/prompt]          Clear screen"
+    )
+    console.print(Panel(
+        help_text,
+        title="[header]Commands[/header]",
+        border_style="border",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    ))
+
+
+def _table(title: str) -> Table:
+    return Table(
+        title=title,
+        show_header=True,
+        header_style="header",
+        border_style="border",
+        box=box.SIMPLE_HEAD,
+        expand=False,
+    )
+
+
+async def _prompt_async() -> str:
+    console.print("[muted]╭─[/muted] [prompt]hive[/prompt] [muted]code[/muted]")
+    return await asyncio.to_thread(input, PROMPT)
 
 
 async def agent_action(tool_name: str, args: dict):
-    """Print tool call action."""
     detail = args.get("path", args.get("url", args.get("command", "")))
     if detail:
-        print(f"  * {tool_name} ({detail})")
+        console.print(f"  [tool]⏺[/tool] [bold]{tool_name}[/bold] [muted]{detail}[/muted]")
     else:
-        print(f"  * {tool_name}")
+        console.print(f"  [tool]⏺[/tool] [bold]{tool_name}[/bold]")
 
 
 async def permission_prompt(tool_name: str, target: str, tier: str) -> str:
-    """Ask user for permission. Returns 'approved' or 'denied'."""
-    label = target[:60] if target else ""
+    label = (target[:60] + "...") if target and len(target) > 60 else target
+    panel = Panel(
+        f"[bold]Tool:[/bold] {tool_name}\n"
+        f"[bold]Target:[/bold] {label}\n"
+        f"[bold]Risk:[/bold] {tier}",
+        title="[permission]Permission Required[/permission]",
+        border_style="warning",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(panel)
     try:
-        answer = input(f"  ? Allow {tool_name} on {label}? [Y/n]: ").strip().lower()
+        approved = Confirm.ask("  Approve tool use?", default=True)
     except (EOFError, KeyboardInterrupt):
         return "denied"
-    if answer in ("", "y", "yes"):
-        return "approved"
-    return "denied"
+    return "approved" if approved else "denied"
 
 
 class HiveCLI:
@@ -70,58 +132,49 @@ class HiveCLI:
         self.running = True
 
     async def start(self):
-        """Initialize and run the CLI."""
         global TEST_MODE
         TEST_MODE = "--test" in sys.argv
 
-        # Init DB
         await init_db()
         self.db = await get_db()
-
-        # Create session
         await create_session(self.db, self.session_id, QWEN_MODEL)
 
         if TEST_MODE:
-            # Test mode: no API key needed, mock responses
-            print_banner()
-            print("  Running in test mode. API calls are mocked.\n")
+            _print_banner()
+            console.print("[dim]Running in test mode. API calls are mocked.[/dim]\n")
             await self._run_test_mode()
             await self.db.close()
             return
 
-        # Validate API key
         if not DASHSCOPE_API_KEY:
-            print("  No API key found.")
-            print("  Set DASHSCOPE_API_KEY in .env file")
-            print("  Or run with --test flag to test without API\n")
+            console.print("[bold red]Error:[/bold red] No API key found.")
+            console.print("Set [bold]DASHSCOPE_API_KEY[/bold] in [dim].env[/dim] file")
+            console.print("Or run with [prompt]--test[/prompt] flag to test without API\n")
             await self.db.close()
             return
 
-        # Init LLM and leader
         llm = QwenClient(api_key=DASHSCOPE_API_KEY, model=QWEN_MODEL)
         self.leader = Leader(llm)
 
-        # Test API key on startup
         try:
             await llm.chat([{"role": "user", "content": "ping"}])
         except Exception as e:
-            print(f"  API key invalid. DashScope returned: {e}")
-            print("  To fix: go to https://dashscope.console.aliyun.com/")
-            print("  Click 'API Keys' in left sidebar -> Create Key")
-            print("  Copy the key (format: sk-abc123...) and update .env\n")
+            console.print(f"[bold red]Error:[/bold red] API key invalid — {e}")
+            console.print("To fix: go to [link]https://dashscope.console.aliyuncs.com/[/link]")
+            console.print("[dim]Click 'API Keys' in left sidebar → Create Key[/dim]")
             await self.db.close()
             return
 
-        print_banner()
+        _print_banner()
 
-        # Main loop
         while self.running:
             try:
-                user_input = input("> ").strip()
+                user_input = await _prompt_async()
             except (EOFError, KeyboardInterrupt):
-                print("\nBye.")
+                console.print("\n[dim]Bye.[/dim]")
                 break
 
+            user_input = user_input.strip()
             if not user_input:
                 continue
 
@@ -131,96 +184,110 @@ class HiveCLI:
 
             await self._handle_message(user_input)
 
-        # Cleanup
         await end_session(self.db, self.session_id)
         self.leader.shutdown()
         await self.db.close()
 
     async def _handle_message(self, text: str):
-        """Process a user message."""
         try:
-            response = await self.leader.handle_message(
-                user_message=text,
-                session_id=self.session_id,
-                memory=self.memory,
-                db=self.db,
-                on_tool_call=agent_action,
-                on_permission=permission_prompt,
-            )
-            # Save messages to DB
+            started = time.perf_counter()
+            with console.status("[thinking]✢ Thinking...[/thinking]", spinner="dots"):
+                response = await self.leader.handle_message(
+                    user_message=text,
+                    session_id=self.session_id,
+                    memory=self.memory,
+                    db=self.db,
+                    on_tool_call=agent_action,
+                    on_permission=permission_prompt,
+                )
+            elapsed = time.perf_counter() - started
             await add_message(self.db, self.session_id, "user", text)
             await add_message(self.db, self.session_id, "assistant", response)
-
-            print(f"\n  {response}\n")
-
+            console.print()
+            console.print(f"[thinking]✢ Thought:[/thinking] [muted]{elapsed:.1f}s[/muted]\n")
+            _render_response(response)
+            console.print(f"\n[status]▣ HIVE[/status] [muted]· {QWEN_MODEL} · {elapsed:.1f}s[/muted]")
+            console.print()
         except Exception as e:
-            print(f"\n  ! Error: {e}\n")
+            console.print(f"\n[bold red]Error:[/bold red] {e}\n")
 
     async def _handle_command(self, cmd: str):
-        """Handle slash commands."""
         parts = cmd.split(maxsplit=1)
         command = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
 
         if command == "/help":
-            print_help()
+            _print_help()
 
-        elif command == "/quit" or command == "/exit":
-            print("Bye.")
+        elif command in ("/quit", "/exit"):
+            console.print("[dim]Bye.[/dim]")
             self.running = False
 
         elif command == "/clear":
-            print("\033[2J\033[H", end="")
+            console.clear()
 
         elif command == "/sessions":
             sessions = await list_sessions(self.db)
             if not sessions:
-                print("  No sessions yet.\n")
+                console.print("[dim]No sessions yet.[/dim]\n")
                 return
-            print("  Recent sessions:")
+            table = _table("Recent Sessions")
+            table.add_column("ID", style="code", width=10)
+            table.add_column("Title", style="white")
+            table.add_column("Model", style="dim")
             for s in sessions:
                 sid = s["id"][:8]
                 title = s["title"] or "(untitled)"
-                print(f"    {sid}  {title}")
-            print()
+                table.add_row(sid, title, s["model"] or "")
+            console.print(table)
+            console.print()
 
         elif command == "/agents":
             agents = await list_agents(self.db)
             if not agents:
-                print("  No agents registered.\n")
+                console.print("[dim]No agents registered.[/dim]\n")
                 return
-            print("  Registered agents:")
+            table = _table("Registered Agents")
+            table.add_column("Name", style="agent")
+            table.add_column("Tier", style="yellow")
+            table.add_column("Uses", style="dim", justify="right")
             for a in agents:
-                print(f"    {a['name']}  (tier: {a['risk_tier']}, uses: {a['use_count']})")
-            print()
+                table.add_row(a["name"], a["risk_tier"], str(a["use_count"]))
+            console.print(table)
+            console.print()
 
         elif command == "/skills":
             skills = await list_skills(self.db)
             if not skills:
-                print("  No skills learned yet.\n")
+                console.print("[dim]No skills learned yet.[/dim]\n")
                 return
-            print("  Learned skills:")
+            table = _table("Learned Skills")
+            table.add_column("Name", style="agent")
+            table.add_column("Confidence", style="green", justify="right")
             for s in skills:
-                conf = f"{s['confidence']:.0%}"
-                print(f"    {s['name']}  (confidence: {conf})")
-            print()
+                table.add_row(s["name"], f"{s['confidence']:.0%}")
+            console.print(table)
+            console.print()
 
         elif command == "/model":
-            print(f"  Current model: {QWEN_MODEL}\n")
+            console.print(f"[bold]Current model:[/bold] [code]{QWEN_MODEL}[/code]\n")
 
         elif command == "/resume":
             if arg:
                 self.session_id = arg
                 self.memory.clear()
-                print(f"  Resumed session: {arg}\n")
+                console.print(f"[success]Done.[/success] Resumed session: [code]{arg}[/code]\n")
             else:
-                print("  Usage: /resume <session_id>\n")
+                console.print("[bold yellow]Usage:[/bold yellow] /resume <session_id>\n")
 
         else:
-            print(f"  Unknown command: {command}\n")
+            console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")
 
     async def _run_test_mode(self):
         """Run in test mode with mock responses."""
+        from hive.tools import TOOLS
+        from hive.runtime import AgentRuntime
+
         # Mock LLM
         class MockLLM:
             def build_tools_schema(self, tools):
@@ -258,11 +325,12 @@ class HiveCLI:
 
         while self.running:
             try:
-                user_input = input("> ").strip()
+                user_input = await _prompt_async()
             except (EOFError, KeyboardInterrupt):
-                print("\nBye.")
+                console.print("\n[dim]Bye.[/dim]")
                 break
 
+            user_input = user_input.strip()
             if not user_input:
                 continue
 
@@ -270,9 +338,11 @@ class HiveCLI:
                 await self._handle_command(user_input)
                 continue
 
-            # Mock response
-            print(f"\n  [TEST] Echo: {user_input}")
-            print("  Set DASHSCOPE_API_KEY in .env for real responses.\n")
+            console.print()
+            console.print("[thinking]✢ Thought:[/thinking] [muted]0.0s[/muted]\n")
+            console.print(f"[white]{user_input}[/white]")
+            console.print(f"\n[status]▣ HIVE[/status] [muted]· test mode · 0.0s[/muted]")
+            console.print("[dim]Set DASHSCOPE_API_KEY in .env for real responses.[/dim]\n")
 
             await add_message(self.db, self.session_id, "user", user_input)
             await add_message(self.db, self.session_id, "assistant", f"[TEST] {user_input}")
