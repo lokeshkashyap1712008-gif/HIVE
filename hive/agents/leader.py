@@ -17,6 +17,63 @@ from hive.core.economy import economy
 from hive.core.message_bus import get_bus, Message
 from hive.core.agent_state import get_or_create_state
 
+# All valid worker module names
+VALID_WORKERS = {
+    "web_scout", "security_scout", "code_architect", "data_analyst",
+    "gpu_tuner", "communicator", "scheduler", "account_manager",
+    "payment_agent", "cloud_tester", "code_runner", "diagnostician",
+    "red_team", "report_agent", "desktop_controller",
+}
+
+# Map common/alternate names to valid modules
+WORKER_ALIASES = {
+    "worker": "code_runner",
+    "scout": "web_scout",
+    "security": "security_scout",
+    "code": "code_runner",
+    "git": "code_runner",
+    "docker": "code_runner",
+    "analysis": "data_analyst",
+    "data": "data_analyst",
+    "gpu": "gpu_tuner",
+    "message": "communicator",
+    "email": "communicator",
+    "schedule": "scheduler",
+    "cron": "scheduler",
+    "diagnose": "diagnostician",
+    "diagnostic": "diagnostician",
+    "report": "report_agent",
+    "red": "red_team",
+    "threat": "red_team",
+    "test": "cloud_tester",
+    "cloud": "cloud_tester",
+    "account": "account_manager",
+    "auth": "account_manager",
+    "payment": "payment_agent",
+    "desktop": "desktop_controller",
+    "mouse": "desktop_controller",
+    "keyboard": "desktop_controller",
+    "click": "desktop_controller",
+    "screenshot": "desktop_controller",
+    "whatsapp": "desktop_controller",
+    "browser": "desktop_controller",
+    "chrome": "desktop_controller",
+}
+
+
+def _normalize_worker_type(worker_type: str) -> str:
+    """Map any worker_type string to a valid module name."""
+    worker_type = worker_type.lower().strip()
+    if worker_type in VALID_WORKERS:
+        return worker_type
+    if worker_type in WORKER_ALIASES:
+        return WORKER_ALIASES[worker_type]
+    # Partial match: check if worker_type is a substring of any valid worker
+    for valid in VALID_WORKERS:
+        if worker_type in valid or valid in worker_type:
+            return valid
+    return "code_runner"  # safe default
+
 
 class LeaderState(Enum):
     ACTIVE = "active"
@@ -65,20 +122,35 @@ class HiveLeader:
             {"role": "system", "content": """You are a task decomposition expert.
 Decompose the given task into specific subtasks that can be assigned to specialized workers.
 Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler.
-Return a JSON array of subtasks with 'description', 'worker_type', and 'priority' fields."""},
+Return ONLY a JSON array (no markdown, no explanation). Each item needs 'description', 'worker_type', 'priority' fields."""},
             {"role": "user", "content": f"Decompose this task: {description}"}
         ]
 
         response = await chat(messages, model=QWEN_MAX, quality=True)
+        raw = response["content"]
+
+        # Strip markdown code blocks if present
+        import re
+        cleaned = re.sub(r'```(?:json)?\s*', '', raw)
+        cleaned = re.sub(r'```\s*$', '', cleaned.strip())
+        # Also try to extract JSON array from text
+        json_match = re.search(r'\[.*\]', cleaned, re.DOTALL)
+        if json_match:
+            cleaned = json_match.group(0)
 
         try:
-            subtasks = json.loads(response["content"])
-            if isinstance(subtasks, list):
+            subtasks = json.loads(cleaned)
+            if isinstance(subtasks, list) and subtasks:
+                # Normalize worker_type for each subtask
+                for st in subtasks:
+                    wt = st.get("worker_type", "code_runner")
+                    st["worker_type"] = _normalize_worker_type(wt)
                 return subtasks
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             pass
 
-        return [{"description": description, "worker_type": "worker", "priority": "medium"}]
+        # Fallback: single task with safe worker
+        return [{"description": description, "worker_type": "code_runner", "priority": "medium"}]
 
     async def synthesize_results(self, results: List[dict]) -> str:
         messages = [
@@ -120,8 +192,7 @@ async def run_swarm(task_description: str) -> dict:
     # Try to run worker agents
     results = []
     for subtask in subtasks:
-        worker_type = subtask.get("worker_type", "worker")
-        worker_id = subtask.get("worker_type", "worker")
+        worker_id = _normalize_worker_type(subtask.get("worker_type", "code_runner"))
         try:
             # Try to import and run the worker
             import importlib
