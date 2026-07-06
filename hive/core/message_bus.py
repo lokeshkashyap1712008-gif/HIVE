@@ -5,6 +5,7 @@ Async communication layer for agent-to-agent messaging.
 
 import time
 import uuid
+import json
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
@@ -101,6 +102,10 @@ class MessageBus:
     def broadcast(self, from_agent: str, content: str, msg_type: MessageType = MessageType.TASK) -> str:
         return self.send_message(from_agent, "", content, msg_type)
 
+    def publish(self, topic: str, event_type: str, data: dict) -> str:
+        content = f"{event_type}: {json.dumps(data)}" if isinstance(data, dict) else f"{event_type}: {data}"
+        return self.send_message(topic, "", content, MessageType.TASK)
+
     def challenge(self, from_agent: str, to_agent: str, claim: str, evidence: str) -> str:
         content = f"CHALLENGE\nClaim: {claim}\nEvidence: {evidence}"
         return self.send_message(from_agent, to_agent, content, MessageType.CHALLENGE)
@@ -129,6 +134,3 @@ def get_bus() -> MessageBus:
     if _bus is None:
         _bus = MessageBus()
     return _bus
-
-
-message_bus = MessageBus()

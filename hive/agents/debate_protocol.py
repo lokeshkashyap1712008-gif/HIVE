@@ -141,7 +141,7 @@ async def _run_round3_refinement(task: str, round1: dict, round2: dict, agents: 
     return round3
 
 
-async def _run_round4_negotiation(task: str, round3_findings: dict[str, str], agents: list[str]) -> dict:
+async def _run_round4_negotiation(task: str, round1: dict, round2: dict, round3_findings: dict[str, str], agents: list[str]) -> dict:
     findings_text = "\n\n".join([
         f"[{DEBATE_AGENTS.get(a, {}).get('role', a)}]: {f}"
         for a, f in round3_findings.items()
@@ -187,9 +187,9 @@ async def _run_round4_negotiation(task: str, round3_findings: dict[str, str], ag
         "confidence": confidence,
         "all_findings": round3_findings,
         "debate_rounds": {
-            "round_1_individual": round3_findings,
-            "round_2_cross_debate": {},
-            "round_3_refinement": {},
+            "round_1_individual": round1,
+            "round_2_cross_debate": round2,
+            "round_3_refinement": round3_findings,
             "round_4_negotiation": {"verdict": verdict, "reasoning": reasoning},
         },
     }
@@ -207,7 +207,7 @@ async def run_debate(task: str, agent_ids: Optional[list[str]] = None) -> dict:
     r1 = await _run_round1_individual(task, agent_ids)
     r2 = await _run_round2_cross_debate(task, r1, agent_ids)
     r3 = await _run_round3_refinement(task, r1, r2, agent_ids)
-    r4 = await _run_round4_negotiation(task, r3, agent_ids)
+    r4 = await _run_round4_negotiation(task, r1, r2, r3, agent_ids)
 
     elapsed_ms = (time.time() - start) * 1000
 

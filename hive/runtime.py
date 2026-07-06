@@ -38,6 +38,9 @@ def _run_agent_process(agent_code: str, task: str, context: dict) -> dict:
         return {"error": f"Agent execution failed: {e}"}
 
 
+MAX_LOOP_ITERATIONS = 20
+
+
 class AgentRuntime:
     """Manages agent execution with process isolation."""
 
@@ -70,8 +73,10 @@ class AgentRuntime:
         """Main agent loop: send to LLM, execute tools, repeat."""
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
+        iteration = 0
 
-        while True:
+        while iteration < MAX_LOOP_ITERATIONS:
+            iteration += 1
             result = await self.llm.chat(conversation, tools=tools_schema)
             message = result.get("choices", [{}])[0].get("message") or {}
             full_content = message.get("content") or ""
@@ -135,6 +140,8 @@ class AgentRuntime:
                     "tool_call_id": tc.get("id", ""),
                     "content": json.dumps(result),
                 })
+
+        return f"I reached the maximum number of tool iterations ({MAX_LOOP_ITERATIONS}). Here is what I accomplished so far:\n\n{full_content}" if full_content else "I reached the maximum number of iterations without a final response."
 
     def shutdown(self):
         """Shutdown process pool."""

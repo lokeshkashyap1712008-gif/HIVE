@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class Diagnostician:
+    @staticmethod
     async def run(description: str, context: dict = None) -> dict:
         description = description.lower()
         context = context or {}

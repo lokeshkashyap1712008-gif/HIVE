@@ -60,6 +60,14 @@ class CreatorAgent:
         header = f'"""Agent: {name} — {description}"""\n\n'
         agent_path.write_text(header + code, encoding="utf-8")
 
+        # Register in SQLite
+        try:
+            from hive.storage import get_db
+            db = await get_db()
+            await register_agent(db, name, str(agent_path), description, risk_tier)
+        except Exception:
+            pass  # Best effort registration
+
         return {
             "name": name,
             "path": str(agent_path),
@@ -72,12 +80,14 @@ class CreatorAgent:
         # Try to extract from markdown code block
         if "```python" in text:
             start = text.index("```python") + 9
-            end = text.index("```", start)
-            return text[start:end].strip()
+            end = text.find("```", start)
+            if end != -1:
+                return text[start:end].strip()
         if "```" in text:
             start = text.index("```") + 3
-            end = text.index("```", start)
-            return text[start:end].strip()
+            end = text.find("```", start)
+            if end != -1:
+                return text[start:end].strip()
         return text.strip()
 
     async def load_agent(self, name: str) -> str | None:

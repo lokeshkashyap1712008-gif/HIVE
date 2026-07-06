@@ -26,7 +26,7 @@ console = get_console()
 
 SLASH_COMMANDS = [
     "/help", "/quit", "/exit", "/sessions", "/resume",
-    "/agents", "/skills", "/model", "/clear",
+    "/agents", "/skills", "/model", "/clear", "/status", "/swarm",
 ]
 
 TEST_MODE = False
@@ -66,6 +66,8 @@ def _print_help():
         "[prompt]/agents[/prompt]         List active agents\n"
         "[prompt]/skills[/prompt]         List learned skills\n"
         "[prompt]/model[/prompt]          Show current model\n"
+        "[prompt]/status[/prompt]         Show swarm & bus status\n"
+        "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
         "[prompt]/clear[/prompt]          Clear screen"
     )
     console.print(Panel(
@@ -130,6 +132,7 @@ class HiveCLI:
         self.leader = None
         self.db = None
         self.running = True
+        self._force_swarm = False
 
     async def start(self):
         global TEST_MODE
@@ -189,27 +192,38 @@ class HiveCLI:
         await self.db.close()
 
     async def _handle_message(self, text: str):
-        try:
-            started = time.perf_counter()
-            with console.status("[thinking]✢ Thinking...[/thinking]", spinner="dots"):
-                response = await self.leader.handle_message(
-                    user_message=text,
-                    session_id=self.session_id,
-                    memory=self.memory,
-                    db=self.db,
-                    on_tool_call=agent_action,
-                    on_permission=permission_prompt,
-                )
-            elapsed = time.perf_counter() - started
-            await add_message(self.db, self.session_id, "user", text)
-            await add_message(self.db, self.session_id, "assistant", response)
-            console.print()
-            console.print(f"[thinking]✢ Thought:[/thinking] [muted]{elapsed:.1f}s[/muted]\n")
-            _render_response(response)
-            console.print(f"\n[status]▣ HIVE[/status] [muted]· {QWEN_MODEL} · {elapsed:.1f}s[/muted]")
-            console.print()
-        except Exception as e:
-            console.print(f"\n[bold red]Error:[/bold red] {e}\n")
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                started = time.perf_counter()
+                force_swarm = self._force_swarm
+                self._force_swarm = False
+                with console.status("[thinking]✢ Thinking...[/thinking]", spinner="dots"):
+                    response = await self.leader.handle_message(
+                        user_message=text,
+                        session_id=self.session_id,
+                        memory=self.memory,
+                        db=self.db,
+                        on_tool_call=agent_action,
+                        on_permission=permission_prompt,
+                        force_swarm=force_swarm,
+                    )
+                elapsed = time.perf_counter() - started
+                await add_message(self.db, self.session_id, "user", text)
+                await add_message(self.db, self.session_id, "assistant", response)
+                console.print()
+                console.print(f"[thinking]✢ Thought:[/thinking] [muted]{elapsed:.1f}s[/muted]\n")
+                _render_response(response)
+                console.print(f"\n[status]▣ HIVE[/status] [muted]· {QWEN_MODEL} · {elapsed:.1f}s[/muted]")
+                console.print()
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    console.print(f"[yellow]⚠ Retrying... ({attempt + 1}/{max_retries})[/yellow]")
+                    await asyncio.sleep(1)
+                else:
+                    console.print(f"\n[bold red]Error:[/bold red] {e}\n")
+                    console.print("[dim]Tip: Try rephrasing your message or use /swarm for complex tasks.[/dim]\n")
 
     async def _handle_command(self, cmd: str):
         parts = cmd.split(maxsplit=1)
@@ -313,9 +327,46 @@ class HiveCLI:
             if arg:
                 self.session_id = arg
                 self.memory.clear()
+                try:
+                    from hive.storage import create_session
+                    await create_session(self.db, self.session_id, QWEN_MODEL)
+                except Exception:
+                    pass
                 console.print(f"[success]Done.[/success] Resumed session: [code]{arg}[/code]\n")
             else:
                 console.print("[bold yellow]Usage:[/bold yellow] /resume <session_id>\n")
+
+        elif command == "/status":
+            try:
+                from hive.agents.leader import get_hive_status
+                from hive.core.message_bus import get_bus
+                from hive.core.economy import economy
+
+                hive_status = get_hive_status()
+                bus = get_bus()
+
+                table = _table("System Status")
+                table.add_column("Component", style="header")
+                table.add_column("Value", style="white")
+
+                table.add_row("Bus Messages", str(bus.message_count()))
+                table.add_row("Registered Agents", ", ".join(bus.list_agents().keys()))
+                table.add_row("Active Tasks", str(hive_status.get("active_tasks", 0)))
+                table.add_row("Budget Remaining", f"{economy.balance} credits")
+
+                type_counts = bus.type_counts()
+                if type_counts:
+                    for msg_type, count in type_counts.items():
+                        table.add_row(f"Messages ({msg_type})", str(count))
+
+                console.print(table)
+                console.print()
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
+        elif command == "/swarm":
+            self._force_swarm = True
+            console.print("[success]Done.[/success] Next task will use swarm mode.\n")
 
         else:
             console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")

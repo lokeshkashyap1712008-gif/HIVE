@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReportAgent:
+    @staticmethod
     async def run(description: str, context: dict = None) -> dict:
         description = description.lower()
         context = context or {}
@@ -100,7 +101,7 @@ async def _summarize(description: str, context: dict) -> dict:
         {"role": "system", "content": "Summarize the following content in 3-5 bullet points."},
         {"role": "user", "content": description},
     ]
-    result = await chat(messages, quality_mode=False)
+    result = await chat(messages, quality=False)
     return {
         "status": "success",
         "summary": result["content"],

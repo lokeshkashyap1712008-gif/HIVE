@@ -1,11 +1,12 @@
 """
 HIVE — Desktop Controller Agent
 Mouse clicks, keyboard input, screenshots, app control, WhatsApp automation.
-Uses pyautogui + pywinauto for Windows desktop control.
+Cross-platform: supports macOS and Windows.
 """
 
 import os
 import re
+import sys
 import time
 import logging
 import subprocess
@@ -13,6 +14,9 @@ import asyncio
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 # Safety: require confirmation for destructive actions
 DESTRUCTIVE_KEYWORDS = [
@@ -27,6 +31,7 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 class DesktopController:
     """Controls desktop via mouse, keyboard, and app automation."""
 
+    @staticmethod
     async def run(description: str, context: dict = None) -> dict:
         description_lower = description.lower()
         context = context or {}
@@ -266,10 +271,15 @@ async def _open_app(description: str) -> dict:
         return {"status": "error", "message": "No app specified. Use: open <app_name>"}
 
     try:
-        if app_name.endswith(".exe"):
-            subprocess.Popen([app_name], shell=True)
+        if IS_WINDOWS:
+            if app_name.endswith(".exe"):
+                subprocess.Popen([app_name], shell=True)
+            else:
+                os.startfile(app_name)
+        elif IS_MACOS:
+            subprocess.Popen(["open", "-a", app_name])
         else:
-            os.startfile(app_name)
+            subprocess.Popen([app_name])
         time.sleep(1)
         return {"status": "success", "action": "open_app", "app": app_name}
     except Exception as e:
@@ -278,38 +288,59 @@ async def _open_app(description: str) -> dict:
 
 async def _close_app(description: str) -> dict:
     """Close an application window."""
-    import pygetwindow as gw
-
     desc_lower = description.lower()
 
-    # Find matching window
-    windows = gw.getAllWindows()
-    for w in windows:
-        if w.title and any(word in w.title.lower() for word in desc_lower.split() if len(word) > 2):
+    if IS_WINDOWS:
+        import pygetwindow as gw
+        windows = gw.getAllWindows()
+        for w in windows:
+            if w.title and any(word in w.title.lower() for word in desc_lower.split() if len(word) > 2):
+                try:
+                    w.close()
+                    return {"status": "success", "action": "close_window", "title": w.title}
+                except Exception as e:
+                    return {"status": "error", "message": f"Could not close: {e}"}
+    elif IS_MACOS:
+        app_name = re.search(r'close\s+(\w[\w\s]*)', description, re.IGNORECASE)
+        if app_name:
+            name = app_name.group(1).strip()
             try:
-                w.close()
-                return {"status": "success", "action": "close_window", "title": w.title}
+                subprocess.run(["osascript", "-e", f'quit app "{name}"'], capture_output=True)
+                return {"status": "success", "action": "close_app", "app": name}
             except Exception as e:
-                return {"status": "error", "message": f"Could not close: {e}"}
+                return {"status": "error", "message": f"Could not close {name}: {e}"}
 
     return {"status": "error", "message": "No matching window found"}
 
 
 async def _list_windows() -> dict:
     """List all open windows."""
-    import pygetwindow as gw
-
-    windows = gw.getAllWindows()
     visible = []
-    for w in windows:
-        if w.title and w.title.strip():
-            visible.append({
-                "title": w.title[:80],
-                "position": [w.left, w.top],
-                "size": [w.width, w.height],
-            })
 
-    return {"status": "success", "action": "list_windows", "count": len(visible), "windows": visible[:20]}
+    if IS_WINDOWS:
+        import pygetwindow as gw
+        windows = gw.getAllWindows()
+        for w in windows:
+            if w.title and w.title.strip():
+                visible.append({
+                    "title": w.title[:80],
+                    "position": [w.left, w.top],
+                    "size": [w.width, w.height],
+                })
+    elif IS_MACOS:
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to get name of every window of every process whose visible is true'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.stdout:
+                apps = result.stdout.strip().split(", ")
+                for app in apps:
+                    visible.append({"title": app.strip(), "position": [0, 0], "size": [0, 0]})
+        except Exception:
+            pass
+
+    return {"status": "success", "windows": visible[:20], "total": len(visible)}
 
 
 async def _focus_window(description: str) -> dict:

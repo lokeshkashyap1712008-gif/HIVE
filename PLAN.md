@@ -4,6 +4,100 @@
 
 ---
 
+## Swarm & Agent Collaboration Overhaul (Phase 1-5 Complete)
+
+### Phase 1: Critical Bug Fixes (DONE)
+
+| # | Bug | File | Fix |
+|---|---|---|---|
+| 1 | `MessageBus.publish()` missing | `core/message_bus.py` | Added `publish()` method |
+| 2 | `quality_mode` wrong kwarg | `agents/safety_agent.py:106`, `agents/workers/report_agent.py:103` | Changed to `quality` |
+| 3 | Dual MessageBus singletons | `core/message_bus.py:134` | Removed duplicate `message_bus` instance |
+| 4 | Debate rounds 1-3 data lost | `agents/debate_protocol.py:189-194` | Fixed to pass actual r1, r2, r3 dicts |
+| 5 | CreatorAgent not registering | `creator.py:57-68` | Added `register_agent()` call |
+| 6 | Worker methods missing `self` | 6 worker files | Added `@staticmethod` decorators |
+| 7 | Desktop Controller Windows-only | `agents/workers/desktop_controller.py` | Added `IS_WINDOWS`/`IS_MACOS` platform detection |
+
+### Phase 2: Unified Architecture (DONE)
+
+- **Merged CLI Leader + Swarm Leader** — Single `Leader` class in `hive/leader.py`
+- **Smart LLM routing** — Uses LLM to decide single-agent vs swarm mode
+- **`/swarm` command** — Force swarm mode for next task
+- **`/status` command** — Show bus messages, registered agents, budget
+
+### Phase 3: Agent Collaboration (DONE)
+
+- **Parallel worker execution** — Workers in same group run via `asyncio.gather()`
+- **MessageBus integration** — Leader sends TASK messages, workers send RESPONSE messages
+- **Debate protocol integration** — High-stakes tasks trigger 4-round debate before execution
+- **Agent state tracking** — Workers update emotional state on task start/completion
+
+### Phase 4: CLI Production Ready (DONE)
+
+- **Retry logic** — CLI retries failed requests up to 2 times
+- **Better token estimation** — Improved `estimate_tokens()` in memory.py
+- **Context window fix** — Always keeps last 4 messages for continuity
+- **Max loop iterations** — Runtime capped at 20 iterations to prevent hangs
+
+### Phase 5: Gap Closure (DONE)
+
+- **Judge integration** — High-stakes swarm tasks go through debate protocol
+- **Cross-platform desktop** — macOS support for open/close/list windows
+- **Platform detection** — `IS_WINDOWS`/`IS_MACOS` flags in desktop controller
+
+---
+
+## Comparison with Successful AI OS
+
+| Feature | OpenHands | CrewAI | AutoGen | HIVE OS (After) |
+|---|---|---|---|---|
+| Event-driven | Yes | No | Yes | Partial (MessageBus) |
+| Supervisor pattern | Yes | Yes | Yes | Yes (LLM routing) |
+| Parallel execution | Yes | Yes | Yes | Yes (asyncio.gather) |
+| Agent handoff | Yes | Yes | Yes | Yes (MessageBus) |
+| State management | Event stream | Task context | Typed events | AgentState + MessageBus |
+| Token budgeting | Yes | Yes | Yes | Yes (Economy) |
+| Debate/verification | No | No | No | Yes (4-round debate) |
+| Judge/guardrails | No | No | No | Yes (Judge + Safety) |
+| Error recovery | Retry | Retry | Retry | Yes (CLI retry) |
+| Streaming | Yes | No | Yes | Partial (buffered) |
+| Observability | Full UI | Verbose | Event log | /status + /agents |
+
+---
+
+## Architecture After Overhaul
+
+```
+User Terminal
+    │
+    ▼
+CLI Layer (cli.py)
+    │  /status, /swarm, /agents, /skills
+    ▼
+Unified Leader (leader.py)
+    │  LLM routing: single vs swarm
+    ├── Single Agent Path ──────────────────┐
+    │   AgentRuntime.run_loop()             │
+    │   Tools ↔ LLM ↔ Permission           │
+    │                                       │
+    └── Swarm Path ────────────────────────┐│
+        agents/leader.py                   ││
+        Task Decomposition (LLM)           ││
+        ├── Group A: [worker1, worker2] ───┤│  asyncio.gather()
+        ├── Group B: [worker3] ────────────┤│
+        │                                   ││
+        High-stakes? ──► Debate Protocol ──┤│
+        │                  4 rounds         ││
+        │                  Judge verdict    ││
+        │                                   ││
+        Result Synthesis (LLM) ────────────┘│
+        │                                   │
+        MessageBus ◄── all agents ──────────┘
+        Economy (credit tracking)
+        AgentState (emotions, reputation)
+        AuditLogger (decision log)
+```
+
 ## 1. What This Is
 
 HIVE OS is a **CLI-based AI operating system**. Cloud brain (Qwen DashScope API) + local execution (your PC).

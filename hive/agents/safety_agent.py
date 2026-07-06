@@ -103,7 +103,7 @@ class SafetyAgent:
         ]
 
         try:
-            result = await chat(messages, quality_mode=True, max_tokens=200)
+            result = await chat(messages, quality=True, max_tokens=200)
             import json
             return json.loads(result["content"])
         except Exception as e:
