@@ -9,6 +9,8 @@ from hive.config import MAX_AGENTS, AGENT_TIMEOUT
 from hive.llm import QwenClient
 from hive.tools import TOOLS, execute_tool
 from hive.permissions import get_tool_tier, check_dangerous_command, should_auto_allow
+from hive.agents.safety_agent import SafetyAgent
+from hive.core.agent_state import get_or_create_state
 
 
 def _run_agent_process(agent_code: str, task: str, context: dict) -> dict:
@@ -74,50 +76,40 @@ class AgentRuntime:
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
         iteration = 0
+        agent_state = get_or_create_state("single_agent")
+        agent_state.task_started()
 
-        while iteration < MAX_LOOP_ITERATIONS:
-            iteration += 1
-            result = await self.llm.chat(conversation, tools=tools_schema)
-            message = result.get("choices", [{}])[0].get("message") or {}
-            full_content = message.get("content") or ""
-            tool_calls = message.get("tool_calls") or []
+        try:
+            while iteration < MAX_LOOP_ITERATIONS:
+                iteration += 1
+                result = await self.llm.chat(conversation, tools=tools_schema)
+                message = result.get("choices", [{}])[0].get("message") or {}
+                full_content = message.get("content") or ""
+                tool_calls = message.get("tool_calls") or []
 
-            if full_content and on_text:
-                await on_text(full_content)
+                if full_content and on_text:
+                    await on_text(full_content)
 
-            if not tool_calls:
-                return full_content or "I did not receive a response from the model."
+                if not tool_calls:
+                    agent_state.task_completed(success=True)
+                    return full_content or "I did not receive a response from the model."
 
-            assistant_msg = {"role": "assistant", "content": full_content, "tool_calls": tool_calls}
-            conversation.append(assistant_msg)
+                assistant_msg = {"role": "assistant", "content": full_content, "tool_calls": tool_calls}
+                conversation.append(assistant_msg)
 
-            for tc in tool_calls:
-                func = tc.get("function", {})
-                tool_name = func.get("name", "")
-                args_str = func.get("arguments", "{}")
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
-                    args = {}
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    tool_name = func.get("name", "")
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_str)
+                    except json.JSONDecodeError:
+                        args = {}
 
-                tier = get_tool_tier(tool_name)
-                target = args.get("path", args.get("url", args.get("command", "")))
+                    tier = get_tool_tier(tool_name)
+                    target = args.get("path", args.get("url", args.get("command", "")))
 
-                if tier == "dangerous":
-                    decision = "denied"
-                    if on_permission:
-                        decision = await on_permission(tool_name, target, tier)
-                    if decision != "approved":
-                        tool_result = {"error": f"Denied: {tool_name}"}
-                        conversation.append({
-                            "role": "tool",
-                            "tool_call_id": tc.get("id", ""),
-                            "content": json.dumps(tool_result),
-                        })
-                        continue
-
-                if tier in ("moderate", "sensitive"):
-                    if not should_auto_allow(tool_name, target):
+                    if tier == "dangerous":
                         decision = "denied"
                         if on_permission:
                             decision = await on_permission(tool_name, target, tier)
@@ -130,18 +122,57 @@ class AgentRuntime:
                             })
                             continue
 
-                if on_tool_call:
-                    await on_tool_call(tool_name, args)
+                    if tier in ("moderate", "sensitive"):
+                        if not should_auto_allow(tool_name, target):
+                            decision = "denied"
+                            if on_permission:
+                                decision = await on_permission(tool_name, target, tier)
+                            if decision != "approved":
+                                tool_result = {"error": f"Denied: {tool_name}"}
+                                conversation.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", ""),
+                                    "content": json.dumps(tool_result),
+                                })
+                                continue
 
-                result = await execute_tool(tool_name, **args)
+                    if tool_name == "run_command" and args.get("command"):
+                        if check_dangerous_command(args["command"]):
+                            tool_result = {"error": f"Blocked dangerous command pattern: {args['command'][:100]}"}
+                            conversation.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": json.dumps(tool_result),
+                            })
+                            continue
 
-                conversation.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": json.dumps(result),
-                })
+                    safety = SafetyAgent(task_context=str(args))
+                    safety_check = await safety.check(str(args))
+                    if not safety_check.get("approved", True):
+                        tool_result = {"error": f"SafetyAgent blocked: {safety_check.get('reason')}"}
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps(tool_result),
+                        })
+                        continue
 
-        return f"I reached the maximum number of tool iterations ({MAX_LOOP_ITERATIONS}). Here is what I accomplished so far:\n\n{full_content}" if full_content else "I reached the maximum number of iterations without a final response."
+                    if on_tool_call:
+                        await on_tool_call(tool_name, args)
+
+                    result = await execute_tool(tool_name, **args)
+
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps(result),
+                    })
+
+            agent_state.task_completed(success=False)
+            return f"I reached the maximum number of tool iterations ({MAX_LOOP_ITERATIONS}). Here is what I accomplished so far:\n\n{full_content}" if full_content else "I reached the maximum number of iterations without a final response."
+        except Exception as e:
+            agent_state.task_completed(success=False)
+            raise
 
     def shutdown(self):
         """Shutdown process pool."""

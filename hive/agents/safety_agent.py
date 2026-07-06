@@ -4,10 +4,12 @@ One-way ratchet guardrail inside the Leader
 Can ONLY block — can never unblock something it blocked
 """
 
+import re
 import logging
 from typing import Optional
 
 from hive.core.llm_router import chat
+from hive.config import DENIED_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,8 @@ DANGEROUS_PATTERNS = [
     "'; DROP", "1=1", "<script", "javascript:",
     "${", "{{",  # injection patterns
 ]
+
+_denied_regex = [re.compile(p) for p in DENIED_PATTERNS]
 
 
 class SafetyAgent:
@@ -61,6 +65,17 @@ class SafetyAgent:
                 return {
                     "approved": False,
                     "reason": f"Dangerous pattern detected: {pattern}",
+                    "requires_human": False,
+                    "blocked_by": "safety_agent",
+                }
+
+        # Check 2b: Regex-based dangerous patterns from config (curl|bash, rm -rf, eval, sudo, etc.)
+        for regex in _denied_regex:
+            if regex.search(action_description):
+                self._record_block(action_description, "DENIED_PATTERN", f"Matched denied pattern: {regex.pattern}")
+                return {
+                    "approved": False,
+                    "reason": f"Denied pattern detected: {regex.pattern}",
                     "requires_human": False,
                     "blocked_by": "safety_agent",
                 }

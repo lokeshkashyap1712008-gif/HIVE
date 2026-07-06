@@ -355,7 +355,7 @@ class HiveCLI:
                 table.add_row("Bus Messages", str(bus.message_count()))
                 table.add_row("Registered Agents", ", ".join(bus.list_agents().keys()))
                 table.add_row("Active Tasks", str(hive_status.get("active_tasks", 0)))
-                table.add_row("Budget Remaining", f"{economy.balance} credits")
+                table.add_row("Budget Remaining", f"{economy.budget.available} credits")
 
                 type_counts = bus.type_counts()
                 if type_counts:

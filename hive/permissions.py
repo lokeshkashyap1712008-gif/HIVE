@@ -51,7 +51,8 @@ def check_dangerous_command(command: str) -> bool:
 
 def check_path_access(path: str, mode: str = "read") -> tuple[bool, str]:
     """Check if path is allowed. Returns (allowed, reason)."""
-    resolved = str(Path(path).resolve())
+    expanded = os.path.expanduser(path)
+    resolved = str(Path(expanded).resolve())
     home = str(Path.home())
 
     # Check denied paths

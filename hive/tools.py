@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import httpx
 from rich.console import Console
+from hive.permissions import check_url_access, check_path_access
 
 console = Console()
 
@@ -92,17 +93,42 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
 
         with console.status(status_text, spinner="dots"):
             if tool_name == "read_file":
-                result = await _read_file(kwargs["path"])
+                path = kwargs.get("path", "")
+                allowed, reason = check_path_access(path, "read")
+                if not allowed:
+                    result = {"error": f"Path access denied: {reason}"}
+                else:
+                    result = await _read_file(path)
             elif tool_name == "list_directory":
-                result = await _list_directory(kwargs["path"])
+                path = kwargs.get("path", "")
+                allowed, reason = check_path_access(path, "read")
+                if not allowed:
+                    result = {"error": f"Path access denied: {reason}"}
+                else:
+                    result = await _list_directory(path)
             elif tool_name == "search_content":
-                result = await _search_content(
-                    kwargs["pattern"], kwargs["path"], kwargs.get("include", "*")
-                )
+                path = kwargs.get("path", "")
+                allowed, reason = check_path_access(path, "read")
+                if not allowed:
+                    result = {"error": f"Path access denied: {reason}"}
+                else:
+                    result = await _search_content(
+                        kwargs["pattern"], path, kwargs.get("include", "*")
+                    )
             elif tool_name == "edit_file":
-                result = await _edit_file(kwargs["path"], kwargs["old"], kwargs["new"])
+                path = kwargs.get("path", "")
+                allowed, reason = check_path_access(path, "write")
+                if not allowed:
+                    result = {"error": f"Path access denied: {reason}"}
+                else:
+                    result = await _edit_file(path, kwargs["old"], kwargs["new"])
             elif tool_name == "write_file":
-                result = await _write_file(kwargs["path"], kwargs["content"])
+                path = kwargs.get("path", "")
+                allowed, reason = check_path_access(path, "write")
+                if not allowed:
+                    result = {"error": f"Path access denied: {reason}"}
+                else:
+                    result = await _write_file(path, kwargs["content"])
             elif tool_name == "run_command":
                 result = await _run_command(
                     kwargs["command"], kwargs.get("workdir", None)
@@ -118,7 +144,12 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                 await _run_command(f"git add {files}")
                 result = await _run_command(f'git commit -m "{kwargs["message"]}"')
             elif tool_name == "web_fetch":
-                result = await _web_fetch(kwargs["url"])
+                url = kwargs.get("url", "")
+                allowed, reason = check_url_access(url)
+                if not allowed:
+                    result = {"error": f"URL access denied: {reason}"}
+                else:
+                    result = await _web_fetch(url)
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}
 

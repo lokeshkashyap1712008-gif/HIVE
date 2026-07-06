@@ -12,9 +12,10 @@ import logging
 from typing import Dict, List, Optional
 
 from hive.core.llm_router import chat, QWEN_MAX
-from hive.core.economy import economy, COSTS
+from hive.core.economy import economy, COSTS, TransactionType
 from hive.core.message_bus import get_bus, MessageType
 from hive.core.agent_state import get_or_create_state
+from hive.agents.safety_agent import SafetyAgent
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,31 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         description = subtask.get("description", "")
         group = subtask.get("group", "default")
         required_skills = subtask.get("skills", [])
+
+        safety = SafetyAgent(task_context=description)
+        safety_result = await safety.check(description)
+        if not safety_result.get("approved", True):
+            logger.warning(f"[Swarm] SafetyAgent blocked task: {safety_result.get('reason')}")
+            return {
+                "worker": worker_id,
+                "task": description,
+                "group": group,
+                "status": "blocked",
+                "error": f"Blocked by SafetyAgent: {safety_result.get('reason')}",
+                "requires_human": safety_result.get("requires_human", False),
+            }
+
+        task_cost = economy.task_cost(worker_id, "medium")
+        if not economy.spend(worker_id, task_cost, f"worker task: {description[:50]}",
+                             tx_type=TransactionType.TASK):
+            logger.warning(f"[Swarm] Insufficient budget for worker {worker_id}")
+            return {
+                "worker": worker_id,
+                "task": description,
+                "group": group,
+                "status": "error",
+                "error": f"Insufficient budget. Need {task_cost} credits, have {economy.budget.available}.",
+            }
 
         self.bus.send_message(
             self.agent_id, worker_id,
@@ -222,8 +248,28 @@ async def run_swarm(task_description: str) -> dict:
                     "status": "rejected",
                     "debate": debate_result,
                 }
+
+            from hive.agents.judge import judge_action
+            agent_positions = {}
+            for agent_id, finding in debate_result.get("rounds", {}).get("round_3_refinement", {}).items():
+                agent_positions[agent_id] = finding
+            if not agent_positions:
+                agent_positions = {"debate_moderator": debate_result.get("final_position", "")}
+
+            judge_result = await judge_action(task_description, agent_positions)
+            if judge_result.get("verdict") == "reject":
+                return {
+                    "task_id": task_id,
+                    "description": task_description,
+                    "subtasks": [],
+                    "results": [],
+                    "synthesis": f"Task rejected by Judge: {judge_result.get('reasoning', 'Failed legitimacy check')}",
+                    "status": "rejected",
+                    "debate": debate_result,
+                    "judge": judge_result,
+                }
         except Exception as e:
-            logger.warning(f"[Swarm] Debate protocol failed: {e}")
+            logger.warning(f"[Swarm] Debate/Judge protocol failed: {e}")
 
     subtasks = await leader.decompose_task(task_description)
 
