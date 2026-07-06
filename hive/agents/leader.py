@@ -8,20 +8,21 @@ import time
 import uuid
 import json
 import importlib
+import logging
 from typing import Dict, List, Optional
-from dataclasses import dataclass
-from enum import Enum
 
 from hive.core.llm_router import chat, QWEN_MAX
 from hive.core.economy import economy, COSTS
 from hive.core.message_bus import get_bus, MessageType
 from hive.core.agent_state import get_or_create_state
 
+logger = logging.getLogger(__name__)
+
 VALID_WORKERS = {
     "web_scout", "security_scout", "code_architect", "data_analyst",
     "gpu_tuner", "communicator", "scheduler", "account_manager",
     "payment_agent", "cloud_tester", "code_runner", "diagnostician",
-    "red_team", "report_agent", "desktop_controller",
+    "red_team", "report_agent", "desktop_controller", "cleanup_crew",
 }
 
 WORKER_ALIASES = {
@@ -36,6 +37,8 @@ WORKER_ALIASES = {
     "mouse": "desktop_controller", "keyboard": "desktop_controller",
     "click": "desktop_controller", "screenshot": "desktop_controller",
     "whatsapp": "desktop_controller", "browser": "desktop_controller", "chrome": "desktop_controller",
+    "cleanup": "cleanup_crew", "clean": "cleanup_crew", "garbage": "cleanup_crew",
+    "gc": "cleanup_crew", "prune": "cleanup_crew",
 }
 
 
@@ -65,7 +68,7 @@ class HiveLeader:
         messages = [
             {"role": "system", "content": """You are a task decomposition expert.
 Decompose the given task into specific subtasks that can be assigned to specialized workers.
-Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler, report_agent, red_team.
+Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler, report_agent, red_team, cleanup_crew.
 Return ONLY a JSON array (no markdown, no explanation). Each item needs 'description', 'worker_type', 'priority' fields.
 For tasks that can run in parallel, use the same 'group' field value."""},
             {"role": "user", "content": f"Decompose this task: {description}"}
@@ -99,6 +102,7 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         worker_id = subtask.get("worker_type", "code_runner")
         description = subtask.get("description", "")
         group = subtask.get("group", "default")
+        required_skills = subtask.get("skills", [])
 
         self.bus.send_message(
             self.agent_id, worker_id,
@@ -127,6 +131,41 @@ For tasks that can run in parallel, use the same 'group' field value."""},
                 "result": result,
                 "status": "completed"
             }
+        except ImportError:
+            # Worker module not found — try AgentForge to create a specialist
+            logger.info(f"[Swarm] Worker '{worker_id}' not found, attempting to forge specialist agent")
+            try:
+                from hive.agents.agent_forge import forge_task
+                forge_result = await forge_task(description, required_skills or [worker_id])
+                if forge_result.get("created"):
+                    agent_id = forge_result["agent_id"]
+                    from hive.agents.agent_forge import run_designed_agent
+                    run_result = await run_designed_agent(agent_id, description)
+                    state.task_completed(success=True)
+                    self.bus.send_message(
+                        agent_id, self.agent_id,
+                        f"RESULT: {json.dumps(run_result)[:200]}",
+                        MessageType.RESPONSE
+                    )
+                    return {
+                        "worker": f"forge:{agent_id}",
+                        "task": description,
+                        "group": group,
+                        "result": run_result,
+                        "status": "completed",
+                        "forged": True,
+                    }
+                else:
+                    raise Exception(f"No worker '{worker_id}' and forge failed: {forge_result.get('reason')}")
+            except Exception as forge_err:
+                state.task_completed(success=False)
+                return {
+                    "worker": worker_id,
+                    "task": description,
+                    "group": group,
+                    "status": "error",
+                    "error": f"Worker not found and forge failed: {forge_err}"
+                }
         except Exception as e:
             state.task_completed(success=False)
             return {
@@ -183,8 +222,8 @@ async def run_swarm(task_description: str) -> dict:
                     "status": "rejected",
                     "debate": debate_result,
                 }
-        except Exception:
-            pass  # Continue with swarm if debate fails
+        except Exception as e:
+            logger.warning(f"[Swarm] Debate protocol failed: {e}")
 
     subtasks = await leader.decompose_task(task_description)
 
@@ -216,6 +255,15 @@ async def run_swarm(task_description: str) -> dict:
         synthesis = await leader.synthesize_results(results)
     else:
         synthesis = "Task completed by swarm."
+
+    # Auto-trigger cleanup after swarm execution
+    try:
+        from hive.agents.cleanup_crew import cleanup_crew
+        cleanup_result = cleanup_crew.run_full_cleanup()
+        if cleanup_result.get("agents_deleted", 0) > 0:
+            logger.info(f"[Swarm] Auto-cleanup: {cleanup_result['agents_deleted']} agents cleaned")
+    except Exception as e:
+        logger.warning(f"[Swarm] Auto-cleanup failed: {e}")
 
     elapsed_ms = (time.time() - start_time) * 1000
 

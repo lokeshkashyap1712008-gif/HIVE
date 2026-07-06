@@ -27,6 +27,7 @@ console = get_console()
 SLASH_COMMANDS = [
     "/help", "/quit", "/exit", "/sessions", "/resume",
     "/agents", "/skills", "/model", "/clear", "/status", "/swarm",
+    "/cleanup", "/create-agent",
 ]
 
 TEST_MODE = False
@@ -68,6 +69,8 @@ def _print_help():
         "[prompt]/model[/prompt]          Show current model\n"
         "[prompt]/status[/prompt]         Show swarm & bus status\n"
         "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
+        "[prompt]/cleanup[/prompt]        Run agent garbage collection\n"
+        "[prompt]/create-agent \\[task][/prompt]  Create a specialist agent\n"
         "[prompt]/clear[/prompt]          Clear screen"
     )
     console.print(Panel(
@@ -367,6 +370,49 @@ class HiveCLI:
         elif command == "/swarm":
             self._force_swarm = True
             console.print("[success]Done.[/success] Next task will use swarm mode.\n")
+
+        elif command == "/cleanup":
+            try:
+                from hive.agents.cleanup_crew import cleanup_crew
+                with console.status("[thinking]✢ Scanning agents...[/thinking]", spinner="dots"):
+                    result = cleanup_crew.run_full_cleanup()
+
+                table = _table("Cleanup Results")
+                table.add_column("Metric", style="header")
+                table.add_column("Value", style="white")
+
+                table.add_row("Agents Scanned", str(result.get("decisions_total", 0)))
+                table.add_row("Agents Archived", str(result.get("agents_archived", 0)))
+                table.add_row("Agents Deleted", str(result.get("agents_deleted", 0)))
+                table.add_row("Memory Freed", f"{result.get('total_memory_freed_mb', 0)} MB")
+                table.add_row("Credits Saved", str(result.get("total_cost_saved", 0)))
+
+                console.print(table)
+                console.print()
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
+        elif command == "/create-agent":
+            if not arg:
+                console.print("[bold yellow]Usage:[/bold yellow] /create-agent <task description>\n")
+                console.print("[dim]Example: /create-agent Analyze Kubernetes security best practices[/dim]\n")
+                return
+            try:
+                from hive.agents.agent_forge import forge_task
+                with console.status("[thinking]✢ Forging specialist agent...[/thinking]", spinner="dots"):
+                    result = await forge_task(arg, ["specialist"])
+
+                if result.get("created"):
+                    designed = result.get("designed", {})
+                    console.print(f"\n[success]Agent created![/success]")
+                    console.print(f"  Name: [bold]{designed.get('name', 'Unknown')}[/bold]")
+                    console.print(f"  Purpose: {designed.get('purpose', 'N/A')}")
+                    console.print(f"  Skills: {', '.join(designed.get('skills', []))}")
+                    console.print(f"  ID: [code]{result.get('agent_id', 'N/A')}[/code]\n")
+                else:
+                    console.print(f"[yellow]Agent not created:[/yellow] {result.get('reason', 'Unknown')}\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
 
         else:
             console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")
