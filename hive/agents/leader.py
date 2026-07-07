@@ -16,6 +16,7 @@ from hive.core.economy import economy, COSTS, TransactionType
 from hive.core.message_bus import get_bus, MessageType
 from hive.core.agent_state import get_or_create_state
 from hive.agents.safety_agent import SafetyAgent
+from hive.dashboard import get_dashboard, Event
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +119,17 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         description = subtask.get("description", "")
         group = subtask.get("group", "default")
         required_skills = subtask.get("skills", [])
+        dash = get_dashboard()
+
+        # Dashboard: spawn agent
+        agent_label = f"{worker_id}_{str(uuid.uuid4())[:4]}"
+        dash.agent_spawn(agent_label, worker_id)
 
         safety = SafetyAgent(task_context=description)
         safety_result = await safety.check(description)
         if not safety_result.get("approved", True):
             logger.warning(f"[Swarm] SafetyAgent blocked task: {safety_result.get('reason')}")
+            dash.agent_fail(agent_label, "blocked by safety")
             return {
                 "worker": worker_id,
                 "task": description,
@@ -136,6 +143,7 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         if not economy.spend(worker_id, task_cost, f"worker task: {description[:50]}",
                              tx_type=TransactionType.TASK):
             logger.warning(f"[Swarm] Insufficient budget for worker {worker_id}")
+            dash.agent_fail(agent_label, "insufficient budget")
             return {
                 "worker": worker_id,
                 "task": description,
@@ -143,6 +151,10 @@ For tasks that can run in parallel, use the same 'group' field value."""},
                 "status": "error",
                 "error": f"Insufficient budget. Need {task_cost} credits, have {economy.budget.available}.",
             }
+
+        # Dashboard: spend credits
+        dash.spend(task_cost, f"task:{worker_id}")
+        dash.agent_work(agent_label, description[:50])
 
         self.bus.send_message(
             self.agent_id, worker_id,
@@ -157,6 +169,10 @@ For tasks that can run in parallel, use the same 'group' field value."""},
             mod = importlib.import_module(f"hive.agents.workers.{worker_id}")
             result = await mod.run(description)
             state.task_completed(success=True)
+
+            # Dashboard: completed
+            dash.agent_done(agent_label)
+            dash.earn(task_cost // 2, f"refund:{worker_id}")  # partial refund on success
 
             self.bus.send_message(
                 worker_id, self.agent_id,
@@ -174,14 +190,20 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         except ImportError:
             # Worker module not found — try AgentForge to create a specialist
             logger.info(f"[Swarm] Worker '{worker_id}' not found, attempting to forge specialist agent")
+            dash.set_status("forging specialist agent")
             try:
                 from hive.agents.agent_forge import forge_task
                 forge_result = await forge_task(description, required_skills or [worker_id])
                 if forge_result.get("created"):
                     agent_id = forge_result["agent_id"]
+                    dash.agent_spawn(agent_id, "forge")
+                    dash.spend(COSTS["creation_event"], f"forge:{agent_id}")
                     from hive.agents.agent_forge import run_designed_agent
+                    dash.agent_work(agent_id, description[:50])
                     run_result = await run_designed_agent(agent_id, description)
+                    dash.agent_done(agent_id)
                     state.task_completed(success=True)
+
                     self.bus.send_message(
                         agent_id, self.agent_id,
                         f"RESULT: {json.dumps(run_result)[:200]}",
@@ -198,6 +220,7 @@ For tasks that can run in parallel, use the same 'group' field value."""},
                 else:
                     raise Exception(f"No worker '{worker_id}' and forge failed: {forge_result.get('reason')}")
             except Exception as forge_err:
+                dash.agent_fail(agent_label, str(forge_err)[:50])
                 state.task_completed(success=False)
                 return {
                     "worker": worker_id,
@@ -207,6 +230,7 @@ For tasks that can run in parallel, use the same 'group' field value."""},
                     "error": f"Worker not found and forge failed: {forge_err}"
                 }
         except Exception as e:
+            dash.agent_fail(agent_label, str(e)[:50])
             state.task_completed(success=False)
             return {
                 "worker": worker_id,
@@ -243,16 +267,24 @@ async def run_swarm(task_description: str) -> dict:
     """Main entry point - run a task through the HIVE swarm with parallel execution"""
     task_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+    dash = get_dashboard()
+
+    # Dashboard: task start
+    dash.set_task(task_description)
+    dash.set_status("routing")
 
     # Check if this is a high-stakes task that needs debate/judge
     high_stakes_keywords = ["delete", "payment", "transfer", "sudo", "drop", "destroy", "irreversible"]
     is_high_stakes = any(kw in task_description.lower() for kw in high_stakes_keywords)
 
     if is_high_stakes:
+        dash.set_status("debating")
         try:
             from hive.agents.debate_protocol import run_debate
+            dash.events.append(Event(time.time(), "msg", "leader", "Running debate protocol", "yellow"))
             debate_result = await run_debate(task_description)
             if debate_result.get("verdict") == "reject":
+                dash.set_status("rejected")
                 return {
                     "task_id": task_id,
                     "description": task_description,
@@ -270,8 +302,10 @@ async def run_swarm(task_description: str) -> dict:
             if not agent_positions:
                 agent_positions = {"debate_moderator": debate_result.get("final_position", "")}
 
+            dash.events.append(Event(time.time(), "msg", "judge", "Verdict phase", "yellow"))
             judge_result = await judge_action(task_description, agent_positions)
             if judge_result.get("verdict") == "reject":
+                dash.set_status("rejected")
                 return {
                     "task_id": task_id,
                     "description": task_description,
@@ -285,7 +319,13 @@ async def run_swarm(task_description: str) -> dict:
         except Exception as e:
             logger.warning(f"[Swarm] Debate/Judge protocol failed: {e}")
 
+    # Dashboard: decomposing
+    dash.set_status("decomposing")
+    dash.events.append(Event(time.time(), "task", "leader", "Breaking into subtasks", "cyan"))
+
     subtasks = await leader.decompose_task(task_description)
+    dash.subtask_progress(0, len(subtasks))
+    dash.events.append(Event(time.time(), "msg", "leader", f"Created {len(subtasks)} subtasks", "green"))
 
     groups = {}
     for st in subtasks:
@@ -294,8 +334,12 @@ async def run_swarm(task_description: str) -> dict:
             groups[group] = []
         groups[group].append(st)
 
+    # Dashboard: spawning workers
+    dash.set_status("spawning")
+
     results = []
     for group_name, group_tasks in groups.items():
+        dash.events.append(Event(time.time(), "msg", "leader", f"Running group '{group_name}' ({len(group_tasks)} tasks)", "cyan"))
         group_results = await asyncio.gather(
             *[leader._run_worker(st) for st in group_tasks],
             return_exceptions=True
@@ -310,6 +354,11 @@ async def run_swarm(task_description: str) -> dict:
                 })
             else:
                 results.append(r)
+        dash.subtask_progress(len(results), len(subtasks))
+
+    # Dashboard: synthesizing
+    dash.set_status("synthesizing")
+    dash.events.append(Event(time.time(), "msg", "leader", "Synthesizing results", "cyan"))
 
     if results:
         synthesis = await leader.synthesize_results(results)
@@ -317,15 +366,22 @@ async def run_swarm(task_description: str) -> dict:
         synthesis = "Task completed by swarm."
 
     # Auto-trigger cleanup after swarm execution
+    dash.set_status("cleanup")
     try:
         from hive.agents.cleanup_crew import cleanup_crew
         cleanup_result = cleanup_crew.run_full_cleanup()
-        if cleanup_result.get("agents_deleted", 0) > 0:
-            logger.info(f"[Swarm] Auto-cleanup: {cleanup_result['agents_deleted']} agents cleaned")
+        deleted = cleanup_result.get("agents_deleted", 0)
+        if deleted > 0:
+            dash.events.append(Event(time.time(), "delete", "cleanup", f"Removed {deleted} expired agents", "red"))
+            logger.info(f"[Swarm] Auto-cleanup: {deleted} agents cleaned")
     except Exception as e:
         logger.warning(f"[Swarm] Auto-cleanup failed: {e}")
 
     elapsed_ms = (time.time() - start_time) * 1000
+
+    # Dashboard: done
+    dash.set_status("done")
+    dash.clear_done_agents()
 
     return {
         "task_id": task_id,

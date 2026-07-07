@@ -174,6 +174,114 @@ class AgentRuntime:
             agent_state.task_completed(success=False)
             raise
 
+    async def run_loop_streaming(self, session_id: str, messages: list[dict],
+                                  live=None, dash=None) -> str:
+        """Agent loop with streaming output - tokens appear line by line."""
+        tools_schema = self.llm.build_tools_schema(TOOLS)
+        conversation = list(messages)
+        iteration = 0
+        agent_state = get_or_create_state("single_agent")
+        agent_state.task_started()
+        
+        # For streaming output
+        collected_content = []
+        current_response = []
+        
+        try:
+            while iteration < MAX_LOOP_ITERATIONS:
+                iteration += 1
+                
+                # Use streaming
+                full_content = ""
+                tool_calls = []
+                
+                async for chunk in self.llm.stream(conversation, tools=tools_schema):
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    
+                    # Stream content token by token
+                    if delta.get("content"):
+                        token = delta["content"]
+                        full_content += token
+                        current_response.append(token)
+                        
+                        # Print token immediately (line by line effect)
+                        import sys
+                        sys.stdout.write(token)
+                        sys.stdout.flush()
+                        
+                        # Update dashboard
+                        if dash:
+                            dash.set_status("thinking")
+                
+                if not full_content and not tool_calls:
+                    # Check for tool calls in final message
+                    result = await self.llm.chat(conversation, tools=tools_schema)
+                    message = result.get("choices", [{}])[0].get("message") or {}
+                    full_content = message.get("content") or ""
+                    tool_calls = message.get("tool_calls") or []
+                
+                if not tool_calls:
+                    agent_state.task_completed(success=True)
+                    return full_content or "I did not receive a response from the model."
+                
+                # Handle tool calls
+                assistant_msg = {"role": "assistant", "content": full_content, "tool_calls": tool_calls}
+                conversation.append(assistant_msg)
+                
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    tool_name = func.get("name", "")
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_str)
+                    except json.JSONDecodeError:
+                        args = {}
+                    
+                    tier = get_tool_tier(tool_name)
+                    target = args.get("path", args.get("url", args.get("command", "")))
+                    
+                    if tier == "dangerous":
+                        tool_result = {"error": f"Denied: {tool_name}"}
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps(tool_result),
+                        })
+                        continue
+                    
+                    if tool_name == "run_command" and args.get("command"):
+                        if check_dangerous_command(args["command"]):
+                            tool_result = {"error": f"Blocked dangerous command: {args['command'][:100]}"}
+                            conversation.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": json.dumps(tool_result),
+                            })
+                            continue
+                    
+                    # Update dashboard with tool execution
+                    if dash:
+                        dash.set_status(f"running {tool_name}")
+                    
+                    # Print tool execution
+                    import sys
+                    sys.stdout.write(f"\n  [tool] {tool_name}")
+                    sys.stdout.flush()
+                    
+                    result = await execute_tool(tool_name, **args)
+                    
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps(result),
+                    })
+            
+            agent_state.task_completed(success=False)
+            return f"Max iterations reached. {full_content}" if full_content else "Max iterations reached."
+        except Exception as e:
+            agent_state.task_completed(success=False)
+            raise
+
     def shutdown(self):
         """Shutdown process pool."""
         if self.executor:

@@ -14,6 +14,8 @@ from hive.memory import ShortTermMemory
 from hive.llm import QwenClient
 from hive.leader import Leader
 from hive.theme import get_console
+from hive.dashboard import get_dashboard, Dashboard
+from hive.tools import TOOLS
 
 from rich import box
 from rich.panel import Panel
@@ -21,6 +23,8 @@ from rich.table import Table
 from rich.markdown import Markdown
 from rich.prompt import Confirm
 from rich.text import Text
+from rich.live import Live
+from rich.layout import Layout
 
 console = get_console()
 
@@ -196,37 +200,104 @@ class HiveCLI:
 
     async def _handle_message(self, text: str):
         max_retries = 2
+        dash = get_dashboard()
+        viz = dash.viz
+        
         for attempt in range(max_retries + 1):
             try:
                 started = time.perf_counter()
                 force_swarm = self._force_swarm
                 self._force_swarm = False
-                with console.status("[thinking]✢ Thinking...[/thinking]", spinner="dots"):
-                    response = await self.leader.handle_message(
-                        user_message=text,
-                        session_id=self.session_id,
-                        memory=self.memory,
-                        db=self.db,
-                        on_tool_call=agent_action,
-                        on_permission=permission_prompt,
-                        force_swarm=force_swarm,
+
+                # Setup dashboard state
+                dash.set_task(text)
+                dash.leader_mode = "swarm" if force_swarm else "auto"
+                dash.set_status("routing")
+                
+                # Create the 70/30 split layout
+                layout = Layout()
+                layout.split_row(
+                    Layout(name="left", ratio=7),
+                    Layout(name="right", ratio=3),
+                )
+                
+                left_layout = Layout()
+                left_layout.split_column(
+                    Layout(dash.render_cli_area(), size=3, name="status"),
+                    Layout(dash.render_task_area(), name="task"),
+                )
+                layout["left"].update(left_layout)
+                layout["right"].update(viz.render())
+                
+                # Show live split layout during processing
+                live = Live(layout, console=console, refresh_per_second=4, transient=False)
+                live.start()
+                
+                try:
+                    # Get streaming response
+                    response = await self._handle_message_streaming(
+                        text, session_id=self.session_id, memory=self.memory,
+                        db=self.db, force_swarm=force_swarm, live=live, dash=dash, layout=layout
                     )
+                finally:
+                    live.stop()
+
                 elapsed = time.perf_counter() - started
                 await add_message(self.db, self.session_id, "user", text)
                 await add_message(self.db, self.session_id, "assistant", response)
-                console.print()
-                console.print(f"[thinking]✢ Thought:[/thinking] [muted]{elapsed:.1f}s[/muted]\n")
-                _render_response(response)
+                
                 console.print(f"\n[status]▣ HIVE[/status] [muted]· {QWEN_MODEL} · {elapsed:.1f}s[/muted]")
                 console.print()
                 return
             except Exception as e:
                 if attempt < max_retries:
-                    console.print(f"[yellow]⚠ Retrying... ({attempt + 1}/{max_retries})[/yellow]")
+                    console.print(f"[yellow]Retrying... ({attempt + 1}/{max_retries})[/yellow]")
                     await asyncio.sleep(1)
                 else:
                     console.print(f"\n[bold red]Error:[/bold red] {e}\n")
                     console.print("[dim]Tip: Try rephrasing your message or use /swarm for complex tasks.[/dim]\n")
+
+    async def _handle_message_streaming(self, text: str, session_id: str, memory, db,
+                                         force_swarm: bool, live: Live, dash, layout: Layout) -> str:
+        """Handle message with streaming output."""
+        viz = dash.viz
+        
+        # Always use swarm mode for visualization
+        mode = "swarm"
+        dash.leader_mode = mode
+        dash.set_status("spawning")
+        
+        # Update layout initially
+        layout["right"].update(viz.render())
+        live.update(layout)
+        
+        # Run swarm task - dashboard updates via events in leader.py
+        # The leader.py will call dash.agent_spawn, dash.agent_work, etc.
+        # which update the viz. We need to refresh the Live display.
+        
+        # Create a background task to refresh the display
+        async def refresh_loop():
+            while True:
+                await asyncio.sleep(0.3)  # Refresh every 300ms
+                layout["right"].update(viz.render())
+                live.update(layout)
+        
+        refresh_task = asyncio.create_task(refresh_loop())
+        
+        try:
+            response = await self.leader._run_swarm_task(text)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Final update
+        layout["right"].update(viz.render())
+        live.update(layout)
+        
+        return response
 
     async def _handle_command(self, cmd: str):
         parts = cmd.split(maxsplit=1)
