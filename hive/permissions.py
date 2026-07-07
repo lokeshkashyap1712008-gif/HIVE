@@ -32,6 +32,16 @@ TOOL_TIERS = {
     "git_commit": "sensitive",
     "install_package": "sensitive",
     "delete_file": "dangerous",
+    # Browser tools
+    "browser_open": "moderate",
+    "browser_click": "moderate",
+    "browser_type": "moderate",
+    "browser_wait": "safe",
+    "browser_screenshot": "safe",
+    "browser_read": "safe",
+    "browser_inspect": "safe",
+    "browser_back": "safe",
+    "browser_close": "safe",
 }
 
 # Compiled dangerous patterns
@@ -131,6 +141,10 @@ def should_auto_allow(tool_name: str, target: str = "") -> bool:
 
     # Web search tools don't need path checks — always auto-allow
     if tool_name in ("web_search", "exa_search", "web_fetch"):
+        return True
+
+    # Browser tools always auto-allow (no path checks needed)
+    if tool_name.startswith("browser_"):
         return True
 
     if tier == "moderate" and target:

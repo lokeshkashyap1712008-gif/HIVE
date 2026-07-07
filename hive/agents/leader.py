@@ -25,6 +25,7 @@ VALID_WORKERS = {
     "gpu_tuner", "scheduler", "account_manager",
     "payment_agent", "cloud_tester", "code_runner", "diagnostician",
     "red_team", "report_agent", "desktop_controller", "cleanup_crew",
+    "browser_agent", "browser_use_worker",
 }
 
 # Only include communicator if SMTP is configured
@@ -43,10 +44,30 @@ WORKER_ALIASES = {
     "auth": "account_manager", "payment": "payment_agent", "desktop": "desktop_controller",
     "mouse": "desktop_controller", "keyboard": "desktop_controller",
     "click": "desktop_controller", "screenshot": "desktop_controller",
-    "whatsapp": "desktop_controller", "browser": "desktop_controller", "chrome": "desktop_controller",
+    "whatsapp": "desktop_controller", "chrome": "desktop_controller",
     "cleanup": "cleanup_crew", "clean": "cleanup_crew", "garbage": "cleanup_crew",
     "gc": "cleanup_crew", "prune": "cleanup_crew",
+    "browser": "browser_agent", "web": "browser_agent", "login": "browser_agent",
+    "navigate": "browser_agent", "automate": "browser_agent", "form": "browser_agent",
+    "browser_use": "browser_use_worker", "bu": "browser_use_worker",
 }
+
+
+def _is_browser_task(description: str) -> bool:
+    """Detect if a task requires browser automation."""
+    desc_lower = description.lower()
+    browser_keywords = [
+        "login", "sign in", "log in", "authenticate",
+        "click", "fill form", "fill out", "submit form",
+        "navigate to", "open website", "open page",
+        "star", "unstar", "like", "follow", "unfollow",
+        "add to cart", "checkout", "buy", "purchase",
+        "sign up", "create account", "register",
+        "browser", "website", "web page",
+        "type in", "enter text", "input",
+        "2fa", "otp", "verification code",
+    ]
+    return any(kw in desc_lower for kw in browser_keywords)
 
 
 def _normalize_worker_type(worker_type: str) -> str:
@@ -72,10 +93,19 @@ class HiveLeader:
         self.bus.register_agent(agent_id, "leader")
 
     async def decompose_task(self, description: str) -> List[dict]:
+        # Detect if this is a browser task
+        if _is_browser_task(description):
+            return [{
+                "description": description,
+                "worker_type": "browser_agent",
+                "priority": "high",
+                "group": "default",
+            }]
+
         messages = [
             {"role": "system", "content": """You are a task decomposition expert.
 Decompose the given task into specific subtasks that can be assigned to specialized workers.
-Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler, report_agent, red_team, cleanup_crew.
+Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler, report_agent, red_team, cleanup_crew, browser_agent, browser_use_worker.
 
 CRITICAL RULES:
 1. Each subtask MUST include ALL relevant context from the original task (URLs, file paths, specific details)
@@ -84,6 +114,22 @@ CRITICAL RULES:
 4. Each subtask description should be self-contained and actionable
 5. Do NOT add communication/notification subtasks (email, slack, etc.) unless the user EXPLICITLY asks for them
 6. Focus on the core task: analysis, scanning, generation — not delivery methods
+7. If the task involves logging in, clicking, filling forms, navigating websites — use browser_agent or browser_use_worker
+8. If the task mentions credentials (email, password) — use browser_agent or browser_use_worker
+
+BROWSER AGENT CAPABILITIES (custom Playwright):
+- browser_agent can open websites, inspect pages, click elements, type text
+- browser_agent handles login, signup, form filling, clicking buttons
+- browser_agent uses LLM to figure out what to click/type autonomously
+- browser_agent stops for 2FA and asks the user for the code
+- Use browser_agent for simple browser tasks
+
+BROWSER USE WORKER CAPABILITIES (Browser Use library):
+- browser_use_worker uses the Browser Use library with real Chrome profile
+- browser_use_worker inherits saved logins from Chrome (no re-authentication needed)
+- browser_use_worker is more reliable for complex multi-step workflows
+- browser_use_worker uses DashScope Qwen as LLM for decision making
+- Use browser_use_worker for complex tasks requiring saved logins or multi-step workflows
 
 WEB SCOUT CAPABILITIES:
 - web_scout can use web_search(query) or exa_search(query) to search the web
@@ -173,7 +219,11 @@ For tasks that can run in parallel, use the same 'group' field value."""},
 
         try:
             mod = importlib.import_module(f"hive.agents.workers.{worker_id}")
-            result = await mod.run(description)
+            # Pass context to browser workers for credentials
+            if worker_id in ("browser_agent", "browser_use_worker"):
+                result = await mod.run(description, context={"task": description})
+            else:
+                result = await mod.run(description)
             state.task_completed(success=True)
 
             # Dashboard: completed

@@ -272,6 +272,93 @@ TOOLS = {
             "source": {"type": "string", "description": "Zip file to list"},
         },
     },
+    # ─── Browser Tools ─────────────────────────────────────────
+    "browser_open": {
+        "description": "Open a URL in the browser and return page title",
+        "parameters": {
+            "url": {"type": "string", "description": "URL to navigate to"},
+        },
+    },
+    "browser_click": {
+        "description": "Click an element by index (from browser_inspect) or CSS selector/text",
+        "parameters": {
+            "index": {"type": "integer", "description": "Element index from browser_inspect (use this OR selector)"},
+            "selector": {"type": "string", "description": "CSS selector or visible text (use this OR index)"},
+        },
+    },
+    "browser_type": {
+        "description": "Type into an input field by index (from browser_inspect) or CSS selector",
+        "parameters": {
+            "index": {"type": "integer", "description": "Element index from browser_inspect (use this OR selector)"},
+            "selector": {"type": "string", "description": "CSS selector of input (use this OR index)"},
+            "text": {"type": "string", "description": "Text to type (use ${key} placeholders for sensitive data)"},
+            "press_enter": {"type": "boolean", "description": "Press Enter after typing (default false)"},
+            "sensitive_data": {"type": "object", "description": "Sensitive data to inject. Keys are placeholders (e.g., 'password'), values are actual data."},
+        },
+    },
+    "browser_wait": {
+        "description": "Wait for an element to appear on the page",
+        "parameters": {
+            "selector": {"type": "string", "description": "CSS selector to wait for"},
+            "timeout": {"type": "integer", "description": "Timeout in seconds (default 10)"},
+        },
+    },
+    "browser_screenshot": {
+        "description": "Take a screenshot of the current page and save to Desktop",
+        "parameters": {
+            "filename": {"type": "string", "description": "Filename for screenshot (default: screenshot.png)"},
+        },
+    },
+    "browser_read": {
+        "description": "Read the text content of the current page",
+        "parameters": {},
+    },
+    "browser_inspect": {
+        "description": "List all interactive elements (buttons, links, inputs) on the page with index numbers. Use index with browser_click/browser_type.",
+        "parameters": {},
+    },
+    "browser_back": {
+        "description": "Navigate back in browser history",
+        "parameters": {},
+    },
+    "browser_close": {
+        "description": "Close the browser session",
+        "parameters": {},
+    },
+    # ─── Session Persistence Tools ─────────────────────────────
+    "browser_session_save": {
+        "description": "Save current browser session (cookies, localStorage) to disk for reuse",
+        "parameters": {
+            "name": {"type": "string", "description": "Session name (e.g., 'github', 'shopify')"},
+        },
+    },
+    "browser_session_load": {
+        "description": "Load a saved browser session (skips login on future runs)",
+        "parameters": {
+            "name": {"type": "string", "description": "Session name to load"},
+        },
+    },
+    "browser_list_sessions": {
+        "description": "List all saved browser sessions",
+        "parameters": {},
+    },
+    "browser_delete_session": {
+        "description": "Delete a saved browser session",
+        "parameters": {
+            "name": {"type": "string", "description": "Session name to delete"},
+        },
+    },
+    # ─── Email Verification Tools ──────────────────────────────
+    "browser_create_inbox": {
+        "description": "Create a disposable email inbox for verification. Use the returned email in signup forms.",
+        "parameters": {},
+    },
+    "browser_wait_for_code": {
+        "description": "Wait for a verification code to arrive in the disposable inbox",
+        "parameters": {
+            "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
+        },
+    },
 }
 
 
@@ -431,6 +518,50 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                 result = await _unzip_file(kwargs["source"], kwargs.get("output", ""))
             elif tool_name == "list_zip":
                 result = await _list_zip(kwargs["source"])
+            # ─── Browser Tools ─────────────────────────────────
+            elif tool_name == "browser_open":
+                result = await _browser_open(kwargs["url"])
+            elif tool_name == "browser_click":
+                result = await _browser_click(
+                    selector=kwargs.get("selector", ""),
+                    index=kwargs.get("index", -1),
+                )
+            elif tool_name == "browser_type":
+                result = await _browser_type(
+                    selector=kwargs.get("selector", ""),
+                    text=kwargs.get("text", ""),
+                    press_enter=kwargs.get("press_enter", False),
+                    index=kwargs.get("index", -1),
+                )
+            elif tool_name == "browser_wait":
+                result = await _browser_wait(
+                    kwargs["selector"],
+                    kwargs.get("timeout", 10),
+                )
+            elif tool_name == "browser_screenshot":
+                result = await _browser_screenshot(
+                    kwargs.get("filename", "screenshot.png"),
+                )
+            elif tool_name == "browser_read":
+                result = await _browser_read()
+            elif tool_name == "browser_inspect":
+                result = await _browser_inspect()
+            elif tool_name == "browser_back":
+                result = await _browser_back()
+            elif tool_name == "browser_close":
+                result = await _browser_close()
+            elif tool_name == "browser_session_save":
+                result = await _browser_session_save(kwargs["name"])
+            elif tool_name == "browser_session_load":
+                result = await _browser_session_load(kwargs["name"])
+            elif tool_name == "browser_list_sessions":
+                result = await _browser_list_sessions()
+            elif tool_name == "browser_delete_session":
+                result = await _browser_delete_session(kwargs["name"])
+            elif tool_name == "browser_create_inbox":
+                result = await _browser_create_inbox()
+            elif tool_name == "browser_wait_for_code":
+                result = await _browser_wait_for_code(kwargs.get("timeout", 30))
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}
 
@@ -1426,5 +1557,354 @@ async def _list_zip(source: str) -> dict:
                 "total_size": sum(f["size"] for f in files),
                 "compressed_size": sum(f["compressed"] for f in files),
             }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ─── Browser Tool Implementations ──────────────────────────────────
+
+async def _browser_open(url: str) -> dict:
+    """Open a URL in the browser."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        title = await page.title()
+        return {"status": "opened", "url": page.url, "title": title}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_click(selector: str = "", index: int = -1) -> dict:
+    """Click an element by index (from browser_inspect) or CSS selector/text."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        if index >= 0:
+            # Click by index from browser_inspect
+            elements = await page.query_selector_all(
+                'a, button, input, select, textarea, [role="button"], [onclick], [role="link"]'
+            )
+            if index < len(elements):
+                el = elements[index]
+                # Try normal click first, fall back to JavaScript click
+                try:
+                    await el.click(timeout=5000)
+                except Exception:
+                    # JavaScript click fallback (bypasses bot detection)
+                    await el.evaluate("(el) => el.click()")
+            else:
+                return {"error": f"Index {index} out of range (found {len(elements)} elements)"}
+        elif selector:
+            try:
+                await page.click(selector, timeout=5000)
+            except Exception:
+                # JavaScript click fallback
+                try:
+                    el = await page.wait_for_selector(selector, timeout=5000)
+                    await el.evaluate("(el) => el.click()")
+                except Exception:
+                    # Try as visible text
+                    try:
+                        await page.get_by_text(selector, exact=False).first.click(timeout=5000)
+                    except Exception as final_err:
+                        return {"error": f"Could not click '{selector}': {final_err}"}
+        else:
+            return {"error": "Provide either index or selector"}
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        return {"status": "clicked", "url": page.url}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_type(selector: str = "", text: str = "", press_enter: bool = False, index: int = -1, sensitive_data: dict = None) -> dict:
+    """Type text into an input field by index (from browser_inspect) or CSS selector."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        
+        # Replace ${key} placeholders with sensitive_data values
+        actual_text = text
+        if sensitive_data:
+            for key, value in sensitive_data.items():
+                actual_text = actual_text.replace(f"${{{key}}}", str(value))
+        
+        if index >= 0:
+            # Type by index from browser_inspect
+            elements = await page.query_selector_all('input, textarea, select, [contenteditable]')
+            if index < len(elements):
+                el = elements[index]
+                # Use JavaScript to fill (bypasses bot detection)
+                await el.evaluate("""(el, text) => {
+                    el.focus();
+                    el.value = text;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }""", actual_text)
+                if press_enter:
+                    await el.press("Enter")
+            else:
+                return {"error": f"Index {index} out of range (found {len(elements)} inputs)"}
+        elif selector:
+            # Use JavaScript to fill (bypasses bot detection)
+            el = await page.wait_for_selector(selector, timeout=5000)
+            await el.evaluate("""(el, text) => {
+                el.focus();
+                el.value = text;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }""", actual_text)
+            if press_enter:
+                await page.press(selector, "Enter")
+        else:
+            return {"error": "Provide either index or selector"}
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        return {"status": "typed", "text": "***" if sensitive_data else actual_text, "url": page.url}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_wait(selector: str, timeout: int = 10) -> dict:
+    """Wait for an element to appear."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        await page.wait_for_selector(selector, timeout=timeout * 1000)
+        return {"status": "found", "selector": selector}
+    except Exception as e:
+        return {"error": f"Timeout waiting for {selector}: {e}"}
+
+
+async def _browser_screenshot(filename: str = "screenshot.png") -> dict:
+    """Take a screenshot and save to Desktop."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        desktop = Path.home() / "OneDrive" / "Desktop"
+        filepath = desktop / filename
+        await page.screenshot(path=str(filepath), full_page=False)
+        return {"status": "saved", "path": str(filepath)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_read() -> dict:
+    """Read the text content of the current page."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        title = await page.title()
+        text = await page.inner_text("body")
+        # Limit to 5000 chars to avoid token overflow
+        if len(text) > 5000:
+            text = text[:5000] + "\n... (truncated)"
+        return {"title": title, "url": page.url, "text": text}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_inspect() -> dict:
+    """List all interactive elements on the page with index numbers."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        # Enhanced element discovery with ARIA roles and labels
+        elements = await page.evaluate("""() => {
+            const selectors = [
+                'input', 'button', 'a', 'select', 'textarea',
+                '[role="button"]', '[role="link"]', '[role="tab"]',
+                '[role="checkbox"]', '[role="radio"]', '[role="combobox"]',
+                '[onclick]', '[contenteditable]'
+            ];
+            const els = document.querySelectorAll(selectors.join(', '));
+            return Array.from(els).slice(0, 30).map((el, i) => {
+                const tag = el.tagName.toLowerCase();
+                const type = el.type || '';
+                const text = el.textContent?.trim().substring(0, 60) || '';
+                const placeholder = el.placeholder || '';
+                const ariaLabel = el.getAttribute('aria-label') || '';
+                const role = el.getAttribute('role') || '';
+                const required = el.required || false;
+                const disabled = el.disabled || false;
+                
+                let selector = '';
+                if (el.id) selector = '#' + el.id;
+                else if (el.name) selector = tag + '[name="' + el.name + '"]';
+                else if (el.getAttribute('data-testid')) selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+                
+                return {
+                    index: i,
+                    tag: tag,
+                    type: type,
+                    text: text,
+                    placeholder: placeholder,
+                    ariaLabel: ariaLabel,
+                    role: role,
+                    required: required,
+                    disabled: disabled,
+                    selector: selector
+                };
+            });
+        }""")
+        return {
+            "elements": elements,
+            "count": len(elements),
+            "url": page.url,
+            "title": await page.title(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_back() -> dict:
+    """Navigate back in browser history."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        page = await pool.get_page()
+        await page.go_back(wait_until="domcontentloaded", timeout=15000)
+        title = await page.title()
+        return {"status": "navigated_back", "url": page.url, "title": title}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_close() -> dict:
+    """Close the browser session."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        await pool.close_session()
+        return {"status": "closed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_session_save(name: str) -> dict:
+    """Save current browser session to disk."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        path = await pool.save_session(name)
+        return {"status": "saved", "name": name, "path": path}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_session_load(name: str) -> dict:
+    """Load a saved browser session."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        success = await pool.load_session(name)
+        if success:
+            page = await pool.get_page()
+            title = await page.title()
+            return {"status": "loaded", "name": name, "url": page.url, "title": title}
+        else:
+            return {"error": f"Session '{name}' not found"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_list_sessions() -> dict:
+    """List all saved browser sessions."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        sessions = await pool.list_sessions()
+        return {"sessions": sessions, "count": len(sessions)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_delete_session(name: str) -> dict:
+    """Delete a saved browser session."""
+    from hive.browser.pool import get_pool
+    pool = get_pool()
+    try:
+        success = await pool.delete_session(name)
+        if success:
+            return {"status": "deleted", "name": name}
+        else:
+            return {"error": f"Session '{name}' not found"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Email verification state
+_inbox_data = {"id": None, "address": None, "api_key": None}
+
+
+async def _browser_create_inbox() -> dict:
+    """Create a disposable email inbox for verification."""
+    import httpx
+    import os
+    
+    api_key = os.getenv("MINUTEMAIL_API_KEY") or os.getenv("MAILSINK_API_KEY")
+    if not api_key:
+        return {"error": "MINUTEMAIL_API_KEY or MAILSINK_API_KEY not set in .env"}
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.minutemail.co/mailboxes",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"ttl": 10},
+                timeout=15
+            )
+            if response.status_code == 200:
+                data = response.json()
+                _inbox_data["id"] = data.get("id")
+                _inbox_data["address"] = data.get("address")
+                _inbox_data["api_key"] = api_key
+                return {
+                    "status": "created",
+                    "email": data.get("address"),
+                    "inbox_id": data.get("id"),
+                    "expires_in": "10 minutes"
+                }
+            else:
+                return {"error": f"API error: {response.status_code} - {response.text}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _browser_wait_for_code(timeout: int = 30) -> dict:
+    """Wait for a verification code to arrive in the disposable inbox."""
+    import httpx
+    import re
+    import time
+    
+    if not _inbox_data["id"] or not _inbox_data["api_key"]:
+        return {"error": "No inbox created. Call browser_create_inbox first."}
+    
+    try:
+        start_time = time.time()
+        async with httpx.AsyncClient() as client:
+            while time.time() - start_time < timeout:
+                response = await client.get(
+                    f"https://api.minutemail.co/mailboxes/{_inbox_data['id']}/mails",
+                    headers={"Authorization": f"Bearer {_inbox_data['api_key']}"},
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("items", [])
+                    if items:
+                        body = items[0].get("body", "") or items[0].get("text", "")
+                        # Extract 4-8 digit code
+                        match = re.search(r'\b(\d{4,8})\b', body)
+                        if match:
+                            return {"status": "received", "code": match.group(1)}
+                await asyncio.sleep(2)
+        return {"error": f"No code received within {timeout} seconds"}
     except Exception as e:
         return {"error": str(e)}

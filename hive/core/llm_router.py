@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 # ─── Model Names ─────────────────────────────────────────────────────────────
 QWEN_TURBO = "qwen-turbo"
 QWEN_PLUS = "qwen-plus"
-QWEN_MAX = "qwen-max"
+QWEN_MAX = "qwen3.7-plus"
 QWEN_CODER = "qwen-coder"
-QWEN_REASON = "qwen-max"
+QWEN_REASON = "qwen3.7-plus"
 
 DEFAULT_MODEL = QWEN_MAX
 

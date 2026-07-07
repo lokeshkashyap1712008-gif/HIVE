@@ -18,12 +18,18 @@ class QwenClient:
 
     async def chat(self, messages: list[dict],
                    tools: list[dict] | None = None,
-                   tool_choice: str | dict = "auto") -> dict:
+                   tool_choice: str | dict = "auto",
+                   temperature: float | None = None,
+                   max_tokens: int | None = None) -> dict:
         """Send chat completion request."""
         kwargs = {"model": self.model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
         resp = await self.client.chat.completions.create(**kwargs)
         return resp.model_dump()
