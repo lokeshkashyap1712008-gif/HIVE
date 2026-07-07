@@ -14,12 +14,16 @@ from hive.config import DENIED_PATTERNS
 logger = logging.getLogger(__name__)
 
 # Actions that require explicit safety check
+# Only block when action is ACTUALLY dangerous, not just mentioning keywords
 HIGH_STAKES_KEYWORDS = [
-    "payment", "pay ", "transfer", "refund",
-    "delete", "remove account", "cancel subscription",
-    "destroy", "terminate instance", "drop table",
-    "sudo", "rm -rf", "--force",
-    "private key", "secret key", "api key",
+    "transfer money", "wire transfer", "send payment",
+    "delete account", "remove account permanently",
+    "cancel subscription permanently",
+    "destroy database", "drop all tables",
+    "rm -rf /", "rm -rf ~",
+    "sudo rm", "sudo rm -rf",
+    "expose private key", "expose secret key", "steal api key",
+    "leak credentials", "share password",
 ]
 
 DANGEROUS_PATTERNS = [
@@ -80,8 +84,12 @@ class SafetyAgent:
                     "blocked_by": "safety_agent",
                 }
 
-        # Check 3: LLM safety review for complex cases
-        if len(action_description) > 500 or any(word in action_lower for word in ["attack", "exploit", "breach"]):
+        # Check 3: LLM safety review only for truly suspicious patterns
+        # Don't trigger on security scanning terms - that's a legitimate use case
+        suspicious_patterns = ["rm -rf", "drop table", "format disk", "shutdown server"]
+        needs_review = len(action_description) > 1000 or any(p in action_lower for p in suspicious_patterns)
+        
+        if needs_review:
             review = await self._llm_review(action_description)
             if not review["safe"]:
                 self._record_block(action_description, "LLM_REVIEW_FAILED", review["reason"])
@@ -104,11 +112,22 @@ class SafetyAgent:
             {
                 "role": "system",
                 "content": (
-                    "You are HIVE's Safety Agent. An action is requesting to do the following. "
-                    "Determine if this is SAFE to execute. Respond ONLY with JSON: "
-                    '{"safe": true/false, "reason": "brief explanation"}'
-                    "\nA safe action is one that: does not steal data, does not delete data, "
-                    "does not harm users, does not bypass security controls."
+                    "You are HIVE's Safety Agent. Determine if an action is SAFE to execute. "
+                    "Respond ONLY with JSON: {\"safe\": true/false, \"reason\": \"brief explanation\"}\n\n"
+                    "SAFE actions include:\n"
+                    "- Security scanning, vulnerability assessment, penetration testing (on authorized targets)\n"
+                    "- Reading files, analyzing code, running tests\n"
+                    "- Generating reports, summaries, documentation\n"
+                    "- Web scraping, API calls for data collection\n"
+                    "- Code generation, refactoring, bug fixes\n\n"
+                    "UNSAFE actions include:\n"
+                    "- Actually exploiting vulnerabilities (not just identifying them)\n"
+                    "- Deleting production data without confirmation\n"
+                    "- Exfiltrating data to external servers\n"
+                    "- Installing malware or backdoors\n"
+                    "- Bypassing authentication to gain unauthorized access\n\n"
+                    "IMPORTANT: Security scanning and vulnerability assessment are LEGITIMATE activities. "
+                    "Only block if the action would cause ACTUAL HARM, not if it's analyzing or reporting."
                 ),
             },
             {

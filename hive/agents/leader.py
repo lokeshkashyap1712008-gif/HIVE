@@ -21,10 +21,15 @@ logger = logging.getLogger(__name__)
 
 VALID_WORKERS = {
     "web_scout", "security_scout", "code_architect", "data_analyst",
-    "gpu_tuner", "communicator", "scheduler", "account_manager",
+    "gpu_tuner", "scheduler", "account_manager",
     "payment_agent", "cloud_tester", "code_runner", "diagnostician",
     "red_team", "report_agent", "desktop_controller", "cleanup_crew",
 }
+
+# Only include communicator if SMTP is configured
+import os
+if os.getenv("SMTP_HOST") and os.getenv("SMTP_USER"):
+    VALID_WORKERS.add("communicator")
 
 WORKER_ALIASES = {
     "worker": "code_runner", "scout": "web_scout", "security": "security_scout",
@@ -70,9 +75,18 @@ class HiveLeader:
             {"role": "system", "content": """You are a task decomposition expert.
 Decompose the given task into specific subtasks that can be assigned to specialized workers.
 Available workers: web_scout, security_scout, code_architect, data_analyst, gpu_tuner, communicator, code_runner, diagnostician, scheduler, report_agent, red_team, cleanup_crew.
+
+CRITICAL RULES:
+1. Each subtask MUST include ALL relevant context from the original task (URLs, file paths, specific details)
+2. If the original task mentions a URL, EVERY subtask that needs it must include the full URL
+3. Do NOT summarize or truncate important details when creating subtasks
+4. Each subtask description should be self-contained and actionable
+5. Do NOT add communication/notification subtasks (email, slack, etc.) unless the user EXPLICITLY asks for them
+6. Focus on the core task: analysis, scanning, generation — not delivery methods
+
 Return ONLY a JSON array (no markdown, no explanation). Each item needs 'description', 'worker_type', 'priority' fields.
 For tasks that can run in parallel, use the same 'group' field value."""},
-            {"role": "user", "content": f"Decompose this task: {description}"}
+            {"role": "user", "content": f"Decompose this task (include ALL details like URLs in each subtask):\n\n{description}"}
         ]
 
         response = await chat(messages, model=QWEN_MAX, quality=True)

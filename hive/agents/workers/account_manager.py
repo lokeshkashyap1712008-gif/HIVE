@@ -19,7 +19,7 @@ from hive.core.llm_router import chat, QWEN_TURBO
 
 logger = logging.getLogger(__name__)
 
-SESSION_DB_PATH = "db/sessions.json"
+SESSION_DB_PATH = os.path.join(os.path.expanduser("~"), ".hive", "sessions.json")
 
 
 def _load_sessions() -> dict:
@@ -30,7 +30,7 @@ def _load_sessions() -> dict:
 
 
 def _save_sessions(sessions: dict):
-    os.makedirs("db", exist_ok=True)
+    os.makedirs(os.path.dirname(SESSION_DB_PATH), exist_ok=True)
     with open(SESSION_DB_PATH, "w") as f:
         json.dump(sessions, f)
 

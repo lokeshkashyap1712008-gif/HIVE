@@ -67,7 +67,12 @@ async def _run_round1_individual(task: str, agents: list[str]) -> dict[str, str]
     round1 = {}
     for i, agent_id in enumerate(agents):
         r = results[i]
-        round1[agent_id] = r["content"] if not isinstance(r, Exception) else f"Error: {r}"
+        if isinstance(r, Exception):
+            round1[agent_id] = f"Error: {r}"
+        elif isinstance(r, dict):
+            round1[agent_id] = r.get("content", "No response")
+        else:
+            round1[agent_id] = str(r)
     return round1
 
 

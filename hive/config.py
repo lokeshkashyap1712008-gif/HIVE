@@ -27,10 +27,15 @@ MAX_TOKENS = int(os.environ.get("HIVE_MAX_TOKENS", "4000"))
 # Security
 ALLOWED_DOMAINS = [
     "api.dashscope.aliyuncs.com",
+    "dashscope-intl.aliyuncs.com",
     "registry.npmjs.org",
     "pypi.org",
     "api.github.com",
     "raw.githubusercontent.com",
+    "httpbin.org",
+    "httpbin.org",
+    "localhost",
+    "127.0.0.1",
 ]
 
 DENIED_PATTERNS = [

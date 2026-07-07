@@ -13,10 +13,10 @@ from hive.core.config import settings
 logger = logging.getLogger(__name__)
 
 # ─── Model Names ─────────────────────────────────────────────────────────────
-QWEN_TURBO = "qwen-max"
-QWEN_PLUS = "qwen-max"
+QWEN_TURBO = "qwen-turbo"
+QWEN_PLUS = "qwen-plus"
 QWEN_MAX = "qwen-max"
-QWEN_CODER = "qwen-max"
+QWEN_CODER = "qwen-coder"
 QWEN_REASON = "qwen-max"
 
 DEFAULT_MODEL = QWEN_MAX
@@ -49,8 +49,10 @@ async def chat(
     selected_model = model or (QWEN_MAX if quality else QWEN_TURBO)
 
     try:
-        result = await client.chat(messages)
-        content = client.extract_response(result)
+        # Create a temporary client with the selected model
+        temp_client = QwenClient(api_key=settings.DASHSCOPE_API_KEY, model=selected_model)
+        result = await temp_client.chat(messages)
+        content = temp_client.extract_response(result)
         tokens = result.get("usage", {}).get("total_tokens", 0) if isinstance(result.get("usage"), dict) else 0
 
         return {

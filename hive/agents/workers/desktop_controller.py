@@ -24,7 +24,7 @@ DESTRUCTIVE_KEYWORDS = [
     "close all", "kill", "uninstall",
 ]
 
-SCREENSHOT_DIR = "db/screenshots"
+SCREENSHOT_DIR = os.path.join(os.path.expanduser("~"), ".hive", "screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 
@@ -273,13 +273,13 @@ async def _open_app(description: str) -> dict:
     try:
         if IS_WINDOWS:
             if app_name.endswith(".exe"):
-                subprocess.Popen([app_name], shell=True)
+                subprocess.Popen([app_name], shell=False)
             else:
                 os.startfile(app_name)
         elif IS_MACOS:
             subprocess.Popen(["open", "-a", app_name])
         else:
-            subprocess.Popen([app_name])
+            subprocess.Popen([app_name], shell=False)
         time.sleep(1)
         return {"status": "success", "action": "open_app", "app": app_name}
     except Exception as e:

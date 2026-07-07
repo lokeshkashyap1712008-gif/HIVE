@@ -17,7 +17,7 @@ from hive.core.audit_logger import audit_logger
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_DIR = "db/archives"
+ARCHIVE_DIR = os.path.join(os.path.expanduser("~"), ".hive", "archives")
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 IDLE_THRESHOLD_SECONDS = 300

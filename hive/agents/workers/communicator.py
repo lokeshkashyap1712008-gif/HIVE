@@ -16,7 +16,7 @@ from hive.core.llm_router import chat, QWEN_TURBO
 
 logger = logging.getLogger(__name__)
 
-SENT_LOG_PATH = "db/messages_sent.json"
+SENT_LOG_PATH = os.path.join(os.path.expanduser("~"), ".hive", "messages_sent.json")
 
 
 def _load_config() -> dict:
@@ -37,7 +37,7 @@ def _load_config() -> dict:
 
 
 def _log_sent(channel: str, recipient: str, message: str, msg_id: str):
-    os.makedirs("db", exist_ok=True)
+    os.makedirs(os.path.dirname(SENT_LOG_PATH), exist_ok=True)
     log = []
     if os.path.exists(SENT_LOG_PATH):
         with open(SENT_LOG_PATH, "r") as f:
@@ -48,6 +48,9 @@ def _log_sent(channel: str, recipient: str, message: str, msg_id: str):
 
 
 async def send_email(to: str, subject: str, body: str, config: dict) -> dict:
+    if not config.get("smtp_host") or not config.get("smtp_user"):
+        return {"sent": False, "channel": "email", "to": to, "error": "SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS in .env"}
+    
     try:
         msg = MIMEMultipart()
         msg["From"] = config["smtp_user"]

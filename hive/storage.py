@@ -143,7 +143,7 @@ async def init_db():
 
 async def create_session(db, session_id: str, model: str) -> None:
     await db.execute(
-        "INSERT INTO sessions (id, model) VALUES (?, ?)",
+        "INSERT OR IGNORE INTO sessions (id, model) VALUES (?, ?)",
         (session_id, model),
     )
     await db.commit()
