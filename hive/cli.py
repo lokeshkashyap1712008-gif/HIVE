@@ -4,6 +4,7 @@ import sys
 import uuid
 import asyncio
 import time
+import json
 from hive import __version__
 from hive.config import QWEN_MODEL, DASHSCOPE_API_KEY, ensure_dirs
 from hive.storage import (
@@ -553,3 +554,259 @@ class HiveCLI:
             await add_message(self.db, self.session_id, "assistant", f"[TEST] {user_input}")
 
         await end_session(self.db, self.session_id)
+
+
+class HiveServer:
+    """JSON-lines server mode for Ink frontend.
+
+    Uses non-blocking stdin via asyncio to avoid blocking the event loop.
+    Permission responses are routed via a pending queue.
+    """
+
+    def __init__(self):
+        ensure_dirs()
+        self.session_id = str(uuid.uuid4())[:8]
+        self.memory = ShortTermMemory()
+        self.leader = None
+        self.db = None
+        self.running = True
+        self._pending_permissions: dict[str, asyncio.Future] = {}
+        self._task_start = 0.0
+
+    def _send(self, msg: dict):
+        """Send a JSON message to stdout (to Ink frontend)."""
+        import json
+        try:
+            sys.stdout.write(json.dumps(msg) + "\n")
+            sys.stdout.flush()
+        except (BrokenPipeError, OSError):
+            self.running = False
+
+    def _format_elapsed(self) -> str:
+        """Format elapsed time since task started."""
+        if not self._task_start:
+            return "0.0s"
+        s = time.time() - self._task_start
+        if s < 60:
+            return f"{s:.1f}s"
+        return f"{s / 60:.1f}m"
+
+    async def _recv_async(self) -> dict | None:
+        """Non-blocking read from stdin using asyncio."""
+        loop = asyncio.get_event_loop()
+        try:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
+                return None
+            return json.loads(line.strip())
+        except (json.JSONDecodeError, EOFError, ValueError):
+            return None
+        except Exception:
+            return None
+
+    async def start(self):
+        await init_db()
+        self.db = await get_db()
+        await create_session(self.db, self.session_id, QWEN_MODEL)
+
+        llm = QwenClient(api_key=DASHSCOPE_API_KEY, model=QWEN_MODEL)
+        self.leader = Leader(llm)
+
+        # Validate API key on first use (lazy) — skip upfront ping to avoid timeout
+        self._api_key_validated = False
+
+        # Patch dashboard to forward messages to frontend
+        self._patch_dashboard()
+
+        # Signal ready immediately
+        self._send({"type": "ready"})
+
+        # Start message reader task
+        reader_task = asyncio.create_task(self._read_loop())
+
+        try:
+            await reader_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await end_session(self.db, self.session_id)
+            self.leader.shutdown()
+            await self.db.close()
+
+    def _patch_dashboard(self):
+        """Patch dashboard methods to forward messages to frontend."""
+        from hive.dashboard import get_dashboard
+        
+        dash = get_dashboard()
+        
+        # Store original methods
+        orig_agent_spawn = dash.agent_spawn
+        orig_agent_work = dash.agent_work
+        orig_agent_done = dash.agent_done
+        orig_agent_fail = dash.agent_fail
+        orig_spend = dash.spend
+        orig_earn = dash.earn
+        orig_set_status = dash.set_status
+        orig_subtask_progress = dash.subtask_progress
+        
+        def patched_agent_spawn(agent_id, kind="worker"):
+            orig_agent_spawn(agent_id, kind)
+            self._send({"type": "agent_spawn", "agent_id": agent_id, "kind": kind})
+        
+        def patched_agent_work(agent_id, task=""):
+            orig_agent_work(agent_id, task)
+            self._send({"type": "agent_work", "agent_id": agent_id, "task": task})
+        
+        def patched_agent_done(agent_id):
+            orig_agent_done(agent_id)
+            self._send({"type": "agent_done", "agent_id": agent_id})
+        
+        def patched_agent_fail(agent_id, reason=""):
+            orig_agent_fail(agent_id, reason)
+            self._send({"type": "agent_fail", "agent_id": agent_id, "reason": reason})
+        
+        def patched_spend(amount, reason):
+            orig_spend(amount, reason)
+            self._send({"type": "spend", "amount": amount, "reason": reason})
+        
+        def patched_earn(amount, reason):
+            orig_earn(amount, reason)
+            self._send({"type": "earn", "amount": amount, "reason": reason})
+        
+        def patched_set_status(status):
+            orig_set_status(status)
+            self._send({"type": "status", "status": status})
+        
+        def patched_subtask_progress(done, total):
+            orig_subtask_progress(done, total)
+            self._send({"type": "subtask_progress", "done": done, "total": total})
+        
+        # Apply patches
+        dash.agent_spawn = patched_agent_spawn
+        dash.agent_work = patched_agent_work
+        dash.agent_done = patched_agent_done
+        dash.agent_fail = patched_agent_fail
+        dash.spend = patched_spend
+        dash.earn = patched_earn
+        dash.set_status = patched_set_status
+        dash.subtask_progress = patched_subtask_progress
+
+    async def _read_loop(self):
+        """Main message reading loop."""
+        while self.running:
+            msg = await self._recv_async()
+            if msg is None:
+                break
+
+            msg_type = msg.get("type")
+
+            if msg_type == "quit":
+                break
+
+            elif msg_type == "user_message":
+                content = msg.get("content", "")
+                if content.strip():
+                    # Handle in background so we can keep reading messages
+                    asyncio.create_task(self._handle_user_message(content))
+
+            elif msg_type == "permission_response":
+                # Route to waiting permission handler
+                request_id = msg.get("request_id", "")
+                decision = msg.get("decision", "denied")
+                future = self._pending_permissions.pop(request_id, None)
+                if future and not future.done():
+                    future.set_result(decision)
+
+    async def _handle_user_message(self, text: str):
+        """Process a user message and stream results back."""
+        self._task_start = time.time()
+
+        # Send initial status
+        self._send({"type": "status", "status": "routing"})
+        self._send({"type": "elapsed", "elapsed": "0.0s"})
+
+        # Start elapsed timer
+        elapsed_running = True
+
+        async def update_elapsed():
+            while elapsed_running:
+                self._send({"type": "elapsed", "elapsed": self._format_elapsed()})
+                await asyncio.sleep(0.5)
+
+        elapsed_task = asyncio.create_task(update_elapsed())
+
+        try:
+            # Use the leader with streaming callbacks
+            response = await self.leader.handle_message(
+                user_message=text,
+                session_id=self.session_id,
+                memory=self.memory,
+                db=self.db,
+                on_tool_call=self._on_tool_call,
+                on_permission=self._on_permission,
+                on_text=self._on_text,
+                force_swarm=False,
+            )
+
+            try:
+                await add_message(self.db, self.session_id, "user", text)
+                await add_message(self.db, self.session_id, "assistant", response)
+            except Exception:
+                pass  # DB errors should not crash the response
+
+            self._send({"type": "response", "content": response})
+
+        except Exception as e:
+            self._send({"type": "error", "message": str(e)})
+        finally:
+            # Stop elapsed timer
+            elapsed_running = False
+            elapsed_task.cancel()
+            try:
+                await elapsed_task
+            except asyncio.CancelledError:
+                pass
+            self._task_start = 0.0
+
+    async def _on_tool_call(self, tool_name: str, args: dict):
+        """Callback when agent calls a tool."""
+        self._send({"type": "tool_call", "tool": tool_name, "args": args})
+        self._send({"type": "status", "status": f"running {tool_name}"})
+
+    async def _on_permission(self, tool_name: str, target: str, tier: str) -> str:
+        """Callback when agent needs permission. Sends request and waits for response."""
+        request_id = str(uuid.uuid4())[:8]
+
+        # Create a future that the read loop will resolve
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        self._pending_permissions[request_id] = future
+
+        self._send({
+            "type": "permission_request",
+            "tool": tool_name,
+            "target": target,
+            "tier": tier,
+            "request_id": request_id,
+        })
+
+        try:
+            # Wait up to 120 seconds for user decision
+            decision = await asyncio.wait_for(future, timeout=120.0)
+            return decision
+        except asyncio.TimeoutError:
+            self._pending_permissions.pop(request_id, None)
+            return "denied"
+
+    async def _on_text(self, text: str):
+        """Callback for streaming text output."""
+        self._send({"type": "stream", "content": text})
+
+
+if __name__ == "__main__":
+    if "--server" in sys.argv:
+        server = HiveServer()
+        asyncio.run(server.start())
+    else:
+        cli = HiveCLI()
+        asyncio.run(cli.start())

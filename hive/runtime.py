@@ -72,7 +72,7 @@ class AgentRuntime:
 
     async def run_loop(self, session_id: str, messages: list[dict],
                        on_tool_call=None, on_permission=None, on_text=None) -> str:
-        """Main agent loop: send to LLM, execute tools, repeat."""
+        """Main agent loop: send to LLM, execute tools, repeat. Uses streaming for fast token display."""
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
         iteration = 0
@@ -82,13 +82,33 @@ class AgentRuntime:
         try:
             while iteration < MAX_LOOP_ITERATIONS:
                 iteration += 1
-                result = await self.llm.chat(conversation, tools=tools_schema)
-                message = result.get("choices", [{}])[0].get("message") or {}
-                full_content = message.get("content") or ""
-                tool_calls = message.get("tool_calls") or []
-
-                if full_content and on_text:
-                    await on_text(full_content)
+                
+                # Use streaming for fast token-by-token display
+                full_content = ""
+                tool_calls = []
+                
+                async for chunk in self.llm.stream(conversation, tools=tools_schema):
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    
+                    # Stream content token by token
+                    if delta.get("content"):
+                        token = delta["content"]
+                        full_content += token
+                        if on_text:
+                            await on_text(token)
+                    
+                    # Collect tool calls
+                    if delta.get("tool_calls"):
+                        for tc in delta["tool_calls"]:
+                            idx = tc.get("index", 0)
+                            while len(tool_calls) <= idx:
+                                tool_calls.append({"id": "", "function": {"name": "", "arguments": ""}})
+                            if tc.get("id"):
+                                tool_calls[idx]["id"] = tc["id"]
+                            if tc.get("function", {}).get("name"):
+                                tool_calls[idx]["function"]["name"] = tc["function"]["name"]
+                            if tc.get("function", {}).get("arguments"):
+                                tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
 
                 if not tool_calls:
                     agent_state.task_completed(success=True)
