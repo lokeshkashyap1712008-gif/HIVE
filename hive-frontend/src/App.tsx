@@ -24,9 +24,39 @@ function makeIdleBees(): BeeEntity[] {
   return IDLE_POSITIONS.map((pos, i) => createIdleBee(`idle-${i}`, pos, 'header'));
 }
 
+// Helper: create a tracked animation interval
+function useAnimationIntervals() {
+  const intervals = useRef(new Set<ReturnType<typeof setInterval>>());
+
+  const add = useCallback((fn: () => void, ms: number, maxTicks: number, onDone?: () => void) => {
+    let ticks = 0;
+    const id = setInterval(() => {
+      fn();
+      ticks++;
+      if (ticks >= maxTicks) {
+        clearInterval(id);
+        intervals.current.delete(id);
+        onDone?.();
+      }
+    }, ms);
+    intervals.current.add(id);
+    return id;
+  }, []);
+
+  const clearAll = useCallback(() => {
+    for (const id of intervals.current) {
+      clearInterval(id);
+    }
+    intervals.current.clear();
+  }, []);
+
+  return { add, clearAll };
+}
+
 export function App() {
   const { exit } = useApp();
   const bridge = getBridge();
+  const { add: addAnimInterval, clearAll: clearAllAnimIntervals } = useAnimationIntervals();
 
   const [connected, setConnected] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -69,7 +99,38 @@ export function App() {
   const taskStartTime = useRef<number>(0);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Slow idle animation — only when NOT processing to avoid terminal wipe
+  // Stream throttle: accumulate tokens, flush every 100ms
+  const streamBuffer = useRef('');
+  const streamFlushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const flushStream = useCallback(() => {
+    if (streamBuffer.current) {
+      const chunk = streamBuffer.current;
+      streamBuffer.current = '';
+      setStreamText(prev => {
+        const next = prev + chunk;
+        // Cap at 10KB to prevent memory bloat
+        return next.length > 10000 ? next.slice(-8000) : next;
+      });
+    }
+  }, []);
+
+  const startStreamThrottle = useCallback(() => {
+    if (streamFlushTimer.current) return;
+    streamFlushTimer.current = setInterval(() => {
+      flushStream();
+    }, 100);
+  }, [flushStream]);
+
+  const stopStreamThrottle = useCallback(() => {
+    if (streamFlushTimer.current) {
+      clearInterval(streamFlushTimer.current);
+      streamFlushTimer.current = null;
+    }
+    flushStream(); // flush remaining
+  }, [flushStream]);
+
+  // Slow idle animation — only when NOT processing
   useEffect(() => {
     if (processing) return;
     const id = setInterval(() => {
@@ -94,7 +155,8 @@ export function App() {
           setConnectError(null);
           break;
         case 'stream':
-          setStreamText(prev => prev + (msg.content as string));
+          // Accumulate tokens in buffer, flush every 100ms
+          streamBuffer.current += (msg.content as string);
           break;
         case 'tool_call':
           setToolCalls(prev => [...prev, {
@@ -129,13 +191,10 @@ export function App() {
           }));
           const newBee = createBee(agentId, agentId, kind);
           setBeeAnim(prev => ({ ...prev, bees: [...prev.bees, newBee] }));
-          let ticks = 0;
-          const anim = setInterval(() => {
+          addAnimInterval(() => {
             setBeeAnim(prev => updateBees(prev));
             setBeeFrame(f => (f + 1) % 4);
-            ticks++;
-            if (ticks > 12) clearInterval(anim);
-          }, 125);
+          }, 125, 12);
           break;
         }
         case 'agent_work': {
@@ -153,13 +212,10 @@ export function App() {
                 ? { ...b, state: 'flying_out' as const } : b
             ),
           }));
-          let ticks = 0;
-          const anim = setInterval(() => {
+          addAnimInterval(() => {
             setBeeAnim(prev => updateBees(prev));
             setBeeFrame(f => (f + 1) % 4);
-            ticks++;
-            if (ticks > 20) clearInterval(anim);
-          }, 125);
+          }, 125, 20);
           break;
         }
         case 'agent_done': {
@@ -175,16 +231,13 @@ export function App() {
                 ? { ...b, state: 'returning' as const, targetX: HIVE_ENTRANCE.x, targetY: HIVE_ENTRANCE.y } : b
             ),
           }));
-          let ticks = 0;
-          const anim = setInterval(() => {
+          addAnimInterval(() => {
             setBeeAnim(prev => updateBees(prev));
             setBeeFrame(f => (f + 1) % 4);
-            ticks++;
-            if (ticks > 20) {
-              clearInterval(anim);
-              setBeeAnim(prev => ({ ...prev, bees: prev.bees.filter(b => b.agentId !== agentId) }));
-            }
-          }, 125);
+          }, 125, 20, () => {
+            // After animation, remove the bee
+            setBeeAnim(prev => ({ ...prev, bees: prev.bees.filter(b => b.agentId !== agentId) }));
+          });
           break;
         }
         case 'agent_fail': {
@@ -200,16 +253,12 @@ export function App() {
                 ? { ...b, state: 'dying' as const, dieFrame: 0, poofFrame: 0 } : b
             ),
           }));
-          let ticks = 0;
-          const anim = setInterval(() => {
+          addAnimInterval(() => {
             setBeeAnim(prev => updateBees(prev));
             setBeeFrame(f => (f + 1) % 4);
-            ticks++;
-            if (ticks > 6) {
-              clearInterval(anim);
-              setBeeAnim(prev => ({ ...prev, bees: prev.bees.filter(b => b.agentId !== agentId) }));
-            }
-          }, 125);
+          }, 125, 6, () => {
+            setBeeAnim(prev => ({ ...prev, bees: prev.bees.filter(b => b.agentId !== agentId) }));
+          });
           break;
         }
         case 'spend':
@@ -225,24 +274,34 @@ export function App() {
           }));
           break;
         case 'response':
-          setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: msg.content as string }]);
+          stopStreamThrottle();
+          setMessages(prev => {
+            const next = [...prev, { id: nextMsgId(), role: 'assistant', content: msg.content as string }];
+            // Keep only last 50 messages to prevent memory growth
+            return next.length > 50 ? next.slice(-50) : next;
+          });
           setProcessing(false);
           setToolCalls([]);
           setStreamText('');
-          setDashboard(prev => ({ ...prev, mode: 'auto' }));
+          setScrollOffset(0);
+          setDashboard(prev => ({
+            ...prev,
+            mode: 'auto',
+            // Clean up stale agents immediately
+            agents: prev.agents.filter(a => a.status === 'working' || a.status === 'spawning'),
+            status: 'idle',
+          }));
           if (elapsedInterval.current) { clearInterval(elapsedInterval.current); elapsedInterval.current = null; }
-          setTimeout(() => {
-            setDashboard(prev => ({
-              ...prev,
-              agents: prev.agents.filter(a => a.status === 'working' || a.status === 'spawning'),
-              status: 'idle',
-            }));
-          }, 2000);
           break;
         case 'error':
-          setMessages(prev => [...prev, { id: nextMsgId(), role: 'error', content: msg.message as string }]);
+          stopStreamThrottle();
+          setMessages(prev => {
+            const next = [...prev, { id: nextMsgId(), role: 'error', content: msg.message as string }];
+            return next.length > 50 ? next.slice(-50) : next;
+          });
           setProcessing(false);
           setStreamText('');
+          setScrollOffset(0);
           setDashboard(prev => ({ ...prev, mode: 'auto' }));
           if (elapsedInterval.current) { clearInterval(elapsedInterval.current); elapsedInterval.current = null; }
           break;
@@ -265,6 +324,8 @@ export function App() {
       bridge.removeAllListeners();
       bridge.stop();
       if (elapsedInterval.current) { clearInterval(elapsedInterval.current); }
+      stopStreamThrottle();
+      clearAllAnimIntervals();
     };
   }, []);
 
@@ -281,18 +342,21 @@ export function App() {
       const elapsed = ((Date.now() - taskStartTime.current) / 1000).toFixed(1);
       setDashboard(prev => ({ ...prev, elapsed: `${elapsed}s` }));
     }, 500);
+    startStreamThrottle();
     bridge.send({ type: 'user_message', content: text });
-  }, []);
+  }, [startStreamThrottle]);
 
   const handleCancel = useCallback(() => {
     if (processingRef.current) {
+      stopStreamThrottle();
+      clearAllAnimIntervals();
       setProcessing(false);
       setToolCalls([]);
       setStreamText('');
       if (elapsedInterval.current) { clearInterval(elapsedInterval.current); elapsedInterval.current = null; }
       setDashboard(prev => ({ ...prev, status: 'idle', elapsed: '0.0s' }));
     }
-  }, []);
+  }, [stopStreamThrottle, clearAllAnimIntervals]);
 
   const handlePermission = useCallback((requestId: string, decision: string) => {
     bridge.send({ type: 'permission_response', request_id: requestId, decision });
@@ -335,12 +399,12 @@ export function App() {
       });
       return;
     }
-    if (key.ctrl && keyInput === 'u') {
-      setScrollOffset(prev => Math.min(messagesRef.current.length, prev + 3));
+    if (key.pageUp || (key.ctrl && keyInput === 'u')) {
+      setScrollOffset(prev => Math.min(messagesRef.current.length, prev + 5));
       return;
     }
-    if (key.ctrl && keyInput === 'd') {
-      setScrollOffset(prev => Math.max(0, prev - 3));
+    if (key.pageDown || (key.ctrl && keyInput === 'd')) {
+      setScrollOffset(prev => Math.max(0, prev - 5));
       return;
     }
     if (key.backspace || key.delete) { setInput(prev => prev.slice(0, -1)); return; }
@@ -392,17 +456,15 @@ export function App() {
       />
 
       <Box flexDirection="row">
-        <Box flexDirection="column" flexGrow={7} borderStyle="round" borderColor="gray" paddingX={1}>
-          <Box flexDirection="column" height={12}>
-            <MessageLog
-              messages={messages.slice(-scrollOffset - 8, messages.length - scrollOffset)}
-              processing={processing}
-              streamText={streamText}
-              toolCalls={toolCalls}
-            />
-          </Box>
+        <Box flexDirection="column" flexGrow={7} paddingX={1}>
+          <MessageLog
+            messages={messages.slice(-6)}
+            processing={processing}
+            streamText={streamText}
+            toolCalls={toolCalls}
+          />
           {scrollOffset > 0 && (
-            <Text color="dim">  ^ Ctrl+D scroll up ({scrollOffset} msgs above) ^</Text>
+            <Text color="dim">  [{scrollOffset} msgs above - PgUp/PgDn to scroll]</Text>
           )}
           {pendingPermission && (
             <PermissionDialog

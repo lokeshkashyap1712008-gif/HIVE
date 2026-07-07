@@ -85,6 +85,12 @@ CRITICAL RULES:
 5. Do NOT add communication/notification subtasks (email, slack, etc.) unless the user EXPLICITLY asks for them
 6. Focus on the core task: analysis, scanning, generation — not delivery methods
 
+WEB SCOUT CAPABILITIES:
+- web_scout can use web_search(query) or exa_search(query) to search the web
+- For business research, use web_scout with a descriptive search query
+- web_scout can search specific domains: google maps, yelp, justdial, zomato, swiggy, linkedin, github
+- web_scout returns structured results with title, url, and text content
+
 Return ONLY a JSON array (no markdown, no explanation). Each item needs 'description', 'worker_type', 'priority' fields.
 For tasks that can run in parallel, use the same 'group' field value."""},
             {"role": "user", "content": f"Decompose this task (include ALL details like URLs in each subtask):\n\n{description}"}

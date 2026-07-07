@@ -1,16 +1,13 @@
-import { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import { useMemo, useRef } from 'react';
+import { Box } from 'ink';
 import { PixelBuffer, RGB, BLACK as _ } from '../lib/pixelbuffer.js';
-import { BEE_FRAMES, BEE_CARRY_FRAMES, BEE_DIE_FRAMES, HONEY_DRIP, POOF_FRAMES } from '../lib/sprites.js';
+import { BEE_FRAMES, BEE_CARRY_FRAMES, BEE_DIE_FRAMES, POOF_FRAMES, HIVE, LEAVES, HONEY_DRIP } from '../lib/sprites.js';
 import { BeeEntity } from '../lib/animations.js';
 import { PixelCanvas } from './PixelCanvas.js';
 
 const YELLOW: RGB = { r: 255, g: 215, b: 0 };
-const DARK_YELLOW: RGB = { r: 218, g: 165, b: 32 };
-const BROWN: RGB = { r: 139, g: 69, b: 19 };
-const DARK_BROWN: RGB = { r: 61, g: 43, b: 31 };
 
-// Block-letter HIVE (each letter 5 wide x 3 tall, compact)
+// Block-letter HIVE (each letter 5 wide x 3 tall)
 const HIVE_TEXT: RGB[][][] = [
   // H
   [
@@ -38,39 +35,13 @@ const HIVE_TEXT: RGB[][][] = [
   ],
 ];
 
-// Compact beehive (20 wide x 10 tall)
-function drawCompactHive(buf: PixelBuffer, ox: number, oy: number) {
-  const rows: [RGB, number][] = [
-    [BROWN, 4],
-    [YELLOW, 5],
-    [DARK_YELLOW, 6],
-    [YELLOW, 7],
-    [DARK_YELLOW, 8],
-    [YELLOW, 9],
-    [DARK_YELLOW, 8],
-    [YELLOW, 7],
-    [DARK_YELLOW, 6],
-    [YELLOW, 5],
-  ];
-
-  let y = oy;
-  for (const [color, width] of rows) {
-    const startX = ox + Math.floor((20 - width) / 2);
-    for (let x = startX; x < startX + width; x++) {
-      buf.setPixel(x, y, color);
-    }
-    y++;
-  }
-
-  // Entrance (dark brown 3x2)
-  const ex = ox + 8;
-  buf.setPixel(ex, oy + 5, DARK_BROWN);
-  buf.setPixel(ex + 1, oy + 5, DARK_BROWN);
-  buf.setPixel(ex + 2, oy + 5, DARK_BROWN);
-  buf.setPixel(ex, oy + 6, DARK_BROWN);
-  buf.setPixel(ex + 1, oy + 6, DARK_BROWN);
-  buf.setPixel(ex + 2, oy + 6, DARK_BROWN);
-}
+// Hive positioned at (7, 4), leaves at (14, 0), honey drip at (7, 14)
+const HIVE_OX = 7;
+const HIVE_OY = 4;
+const LEAVES_OX = 14;
+const LEAVES_OY = 0;
+const HONEY_OX = 7;
+const HONEY_OY = 14;
 
 interface HiveHeaderProps {
   beeFrame: number;
@@ -78,41 +49,39 @@ interface HiveHeaderProps {
   bees: BeeEntity[];
 }
 
+// Pre-render the static background (leaves + hive + HIVE text) once
+let staticBgCache: PixelBuffer | null = null;
+
+function getStaticBackground(): PixelBuffer {
+  if (staticBgCache) return staticBgCache;
+  const buf = new PixelBuffer(42, 28);
+  buf.drawSprite(LEAVES_OX, LEAVES_OY, LEAVES);
+  let textX = 9;
+  for (const letter of HIVE_TEXT) {
+    for (let ly = 0; ly < letter.length; ly++) {
+      for (let lx = 0; lx < letter[ly].length; lx++) {
+        if (letter[ly][lx].r !== 0 || letter[ly][lx].g !== 0 || letter[ly][lx].b !== 0) {
+          buf.setPixel(textX + lx, ly, letter[ly][lx]);
+        }
+      }
+    }
+    textX += 6;
+  }
+  buf.drawSprite(HIVE_OX, HIVE_OY, HIVE);
+  staticBgCache = buf;
+  return buf;
+}
+
 export function HiveHeader({ beeFrame, honeyFrame, bees }: HiveHeaderProps) {
   const buffer = useMemo(() => {
-    // 42 wide x 14 tall = 7 terminal rows
-    const buf = new PixelBuffer(42, 14);
+    // Clone static background (cheap — just copies pixel array)
+    const buf = getStaticBackground().clone();
 
-    // Layer 1: Block-letter HIVE text (centered)
-    let textX = 11;
-    for (const letter of HIVE_TEXT) {
-      for (let ly = 0; ly < letter.length; ly++) {
-        for (let lx = 0; lx < letter[ly].length; lx++) {
-          if (letter[ly][lx].r !== 0 || letter[ly][lx].g !== 0 || letter[ly][lx].b !== 0) {
-            buf.setPixel(textX + lx, ly, letter[ly][lx]);
-          }
-        }
-      }
-      textX += 6;
-    }
+    // Layer 4: Honey drip overlay (animated)
+    const dripFrame = HONEY_DRIP[honeyFrame % HONEY_DRIP.length];
+    buf.drawSprite(HONEY_OX, HONEY_OY, dripFrame);
 
-    // Layer 2: Compact beehive (centered below text)
-    drawCompactHive(buf, 11, 4);
-
-    // Layer 3: Honey drip
-    const hFrame = Math.floor(honeyFrame / 4) % HONEY_DRIP.length;
-    // Only draw drip columns that exist in the small buffer
-    const drip = HONEY_DRIP[hFrame];
-    for (let dx = 0; dx < drip[0].length; dx++) {
-      for (let dy = 0; dy < drip.length; dy++) {
-        const px = drip[dy][dx];
-        if (px.r !== 0 || px.g !== 0 || px.b !== 0) {
-          buf.setPixel(11 + dx, 12 + dy, px);
-        }
-      }
-    }
-
-    // Layer 4: Animated bees
+    // Layer 5: Animated bees
     const wingFrameIdx = beeFrame % 4;
     for (const bee of bees) {
       if (bee.state === 'dead') continue;

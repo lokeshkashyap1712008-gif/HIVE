@@ -22,18 +22,18 @@ export class PixelBuffer {
 
   setPixel(x: number, y: number, color: RGB): void {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
-    this.data[y][x] = { ...color };
+    this.data[y][x] = color;
   }
 
   getPixel(x: number, y: number): RGB {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return BLACK;
-    return { ...this.data[y][x] };
+    return this.data[y][x];
   }
 
   fill(color: RGB): void {
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
-        this.data[y][x] = { ...color };
+        this.data[y][x] = color;
       }
     }
   }
@@ -82,7 +82,7 @@ export class PixelBuffer {
     const buf = new PixelBuffer(this.width, this.height);
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
-        buf.data[y][x] = { ...this.data[y][x] };
+        buf.data[y][x] = this.data[y][x];
       }
     }
     return buf;

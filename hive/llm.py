@@ -17,21 +17,25 @@ class QwenClient:
         )
 
     async def chat(self, messages: list[dict],
-                   tools: list[dict] | None = None) -> dict:
+                   tools: list[dict] | None = None,
+                   tool_choice: str | dict = "auto") -> dict:
         """Send chat completion request."""
         kwargs = {"model": self.model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
 
         resp = await self.client.chat.completions.create(**kwargs)
         return resp.model_dump()
 
     async def stream(self, messages: list[dict],
-                     tools: list[dict] | None = None):
+                     tools: list[dict] | None = None,
+                     tool_choice: str | dict = "auto"):
         """Stream chat completion. Yields parsed chunks."""
         kwargs = {"model": self.model, "messages": messages, "stream": True}
         if tools:
             kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
 
         stream = await self.client.chat.completions.create(**kwargs)
         async for chunk in stream:
@@ -55,6 +59,19 @@ class QwenClient:
         """Convert tool registry to OpenAI function calling schema."""
         schema = []
         for name, spec in tools.items():
+            # Determine which params are required vs optional
+            required_params = []
+            properties = {}
+            for param_name, param_spec in spec["parameters"].items():
+                properties[param_name] = {
+                    "type": param_spec["type"],
+                    "description": param_spec["description"],
+                }
+                # Mark first param (usually "query" or "path") as required
+                # Everything else is optional
+                if param_name == "query" or param_name == "path" or param_name == "command" or param_name == "url":
+                    required_params.append(param_name)
+
             schema.append({
                 "type": "function",
                 "function": {
@@ -62,8 +79,8 @@ class QwenClient:
                     "description": spec["description"],
                     "parameters": {
                         "type": "object",
-                        "properties": spec["parameters"],
-                        "required": list(spec["parameters"].keys()),
+                        "properties": properties,
+                        "required": required_params,
                     },
                 },
             })

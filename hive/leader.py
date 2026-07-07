@@ -14,30 +14,35 @@ from hive.core.economy import economy, COSTS
 from hive.core.message_bus import get_bus
 from hive.core.audit_logger import audit_logger
 
-SYSTEM_PROMPT = """You are HIVE, an AI operating system. You have access to tools.
+SYSTEM_PROMPT = """You are HIVE, an AI operating system. You MUST use tools to do work.
 
-When the user gives you a task:
-1. Think about what needs to be done
-2. Use tools to accomplish it
-3. Report results clearly
+RULE: Call exactly ONE tool per response. Then wait for the result before calling the next tool.
 
-If a task is complex, break it into steps and execute them one by one.
-If you need a specialized agent that doesn't exist, describe what agent you need.
+YOUR TOOLS:
+- web_search(query): Search the web. Use this FIRST when asked to find/search/look up anything.
+- exa_search(query, num_results): Advanced web search with more results.
+- create_excel(data, title, filename): Create Excel file. data must be a JSON array of objects.
+- read_file(path), write_file(path, content), run_command(command)
 
-Be concise. Don't explain what you're about to do — just do it.
-Only explain when the task is complete."""
+WORKFLOW (follow step by step, one tool call per turn):
+Step 1: Call web_search("your query here") — wait for results
+Step 2: Parse the results into structured data
+Step 3: Call create_excel(data=[{name, address, phone, ...}], title="Title", filename="file.xlsx")
+
+CRITICAL:
+- NEVER call create_excel in the same turn as web_search — you don't have the data yet
+- NEVER create placeholder or sample data
+- Only ONE tool call per response — then wait for the result
+
+Just do the work. Don't explain what you'll do."""
 
 ROUTING_PROMPT = """You are a task router. Analyze the user's message and decide the best execution mode.
 
 Modes:
-- "single": Simple tasks, questions, small edits, reading files, quick lookups
-- "swarm": Complex tasks requiring multiple specialists, research + analysis + coding, security reviews, data analysis, multi-step workflows
+- "single": Simple tasks, questions, small edits, reading files, quick lookups, web searches, data collection, creating files
+- "swarm": Complex tasks requiring multiple specialists working in parallel, security reviews, threat models
 
-Consider:
-- Does this need multiple specialists working together?
-- Is this a multi-step task with research, analysis, AND implementation?
-- Would parallel execution save time?
-- Is this a security review, threat model, or comprehensive analysis?
+IMPORTANT: Most tasks should use "single" mode. Only use "swarm" for truly complex multi-agent tasks.
 
 Reply with ONLY one word: "single" or "swarm" """
 

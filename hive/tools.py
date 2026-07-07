@@ -88,6 +88,31 @@ TOOLS = {
             "url": {"type": "string", "description": "URL to fetch"},
         },
     },
+    "exa_search": {
+        "description": "Search the web using Exa AI (Google Maps, business directories, etc.)",
+        "parameters": {
+            "query": {"type": "string", "description": "Search query"},
+            "num_results": {"type": "integer", "description": "Number of results (default 5)"},
+            "type": {"type": "string", "description": "Search type: 'neural' (semantic), 'keyword', or 'auto' (default auto)"},
+            "include_domains": {"type": "string", "description": "Comma-separated domains to search (e.g. 'yelp.com,google.com')"},
+            "category": {"type": "string", "description": "Category filter: 'company', 'research paper', 'news', 'linkedin profile', 'github', 'tweet', 'movie', 'song', 'personal site', 'pdf'"},
+        },
+    },
+    "web_search": {
+        "description": "Search the web for information (alias for exa_search)",
+        "parameters": {
+            "query": {"type": "string", "description": "Search query"},
+            "num_results": {"type": "integer", "description": "Number of results (default 5)"},
+        },
+    },
+    "create_excel": {
+        "description": "Create a formatted Excel file from data",
+        "parameters": {
+            "data": {"type": "string", "description": "JSON array of objects to write to Excel"},
+            "title": {"type": "string", "description": "Title for the Excel file"},
+            "filename": {"type": "string", "description": "Filename (without extension)"},
+        },
+    },
     # ─── System Tools ─────────────────────────────────────────────
     "system_info": {
         "description": "Get system information (OS, Python, CPU, RAM, disk)",
@@ -320,6 +345,29 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                     result = {"error": f"URL access denied: {reason}"}
                 else:
                     result = await _web_fetch(url)
+            elif tool_name == "exa_search":
+                result = await _exa_search(
+                    kwargs["query"],
+                    kwargs.get("num_results", 5),
+                    kwargs.get("type", "auto"),
+                    kwargs.get("include_domains", ""),
+                    kwargs.get("category", ""),
+                )
+            elif tool_name == "web_search":
+                # Alias for exa_search
+                result = await _exa_search(
+                    kwargs["query"],
+                    kwargs.get("num_results", 5),
+                    "auto",
+                    "",
+                    "",
+                )
+            elif tool_name == "create_excel":
+                result = await _create_excel(
+                    kwargs["data"],
+                    kwargs.get("title", "HIVE Report"),
+                    kwargs.get("filename", "report"),
+                )
             # ─── System Tools ─────────────────────────────────────
             elif tool_name == "system_info":
                 result = await _system_info()
@@ -546,6 +594,169 @@ async def _web_fetch(url: str) -> dict:
         if "json" in content_type:
             return {"content": resp.json(), "status": resp.status_code}
         return {"content": resp.text[:10000], "status": resp.status_code}
+
+
+async def _exa_search(
+    query: str,
+    num_results: int = 5,
+    search_type: str = "auto",
+    include_domains: str = "",
+    category: str = "",
+) -> dict:
+    """Search the web using Exa AI API."""
+    import os
+    api_key = os.environ.get("EXA_API_KEY", "")
+    if not api_key:
+        return {"error": "EXA_API_KEY not set in environment. Add it to .env file."}
+
+    url = "https://api.exa.ai/search"
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "query": query,
+        "numResults": min(num_results, 20),
+        "type": search_type,
+        "contents": {
+            "text": True,
+        },
+    }
+
+    if include_domains:
+        payload["includeDomains"] = [d.strip() for d in include_domains.split(",") if d.strip()]
+
+    if category:
+        payload["category"] = category
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+            if resp.status_code != 200:
+                return {"error": f"Exa API error: {resp.status_code} - {resp.text[:500]}"}
+            data = resp.json()
+            results = []
+            for r in data.get("results", []):
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "published_date": r.get("publishedDate", ""),
+                    "author": r.get("author", ""),
+                    "text": r.get("text", "")[:2000],
+                })
+            return {"results": results, "total": len(results)}
+        except httpx.TimeoutException:
+            return {"error": "Exa API request timed out"}
+        except Exception as e:
+            return {"error": f"Exa API error: {str(e)}"}
+
+
+async def _create_excel(data_str: str, title: str = "HIVE Report", filename: str = "report") -> dict:
+    """Create a formatted Excel file from JSON data."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from datetime import datetime
+    except ImportError:
+        return {"error": "openpyxl not installed. Run: pip install openpyxl"}
+
+    # Parse data
+    try:
+        data = json.loads(data_str) if isinstance(data_str, str) else data_str
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON data"}
+
+    if not isinstance(data, list) or not data:
+        return {"error": "Data must be a non-empty JSON array of objects"}
+
+    # Create workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell_alignment = Alignment(vertical="top", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    # Get headers
+    headers = list(data[0].keys()) if isinstance(data[0], dict) else [f"Col {i}" for i in range(len(data[0]))]
+
+    # Write headers
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=str(header).upper())
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Write data
+    for row_idx, row_data in enumerate(data, 2):
+        for col_idx, header in enumerate(headers, 1):
+            value = row_data.get(header, "") if isinstance(row_data, dict) else ""
+            cell = ws.cell(row=row_idx, column=col_idx, value=str(value))
+            cell.alignment = cell_alignment
+            cell.border = thin_border
+            if row_idx % 2 == 0:
+                cell.fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+
+    # Auto-adjust column widths
+    for col in range(1, len(headers) + 1):
+        max_length = 0
+        column_letter = get_column_letter(col)
+        for row in range(1, len(data) + 2):
+            try:
+                cell_value = ws.cell(row=row, column=col).value
+                if cell_value:
+                    max_length = max(max_length, len(str(cell_value)))
+            except:
+                pass
+        ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+
+    # Add title row
+    ws.insert_rows(1)
+    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell.font = Font(bold=True, size=14, color="4472C4")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+
+    # Add timestamp
+    ws.insert_rows(2)
+    ts_cell = ws.cell(row=2, column=1, value=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    ts_cell.font = Font(italic=True, color="808080")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+
+    # Save
+    desktop = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+    if not os.path.exists(desktop):
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    hive_output = os.path.join(os.path.expanduser("~"), ".hive", "output")
+    os.makedirs(hive_output, exist_ok=True)
+
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    fname = f"{filename}_{ts}.xlsx"
+    filepath = os.path.join(hive_output, fname)
+    desktop_path = os.path.join(desktop, fname)
+
+    try:
+        wb.save(filepath)
+        wb.save(desktop_path)
+        return {
+            "status": "success",
+            "file": filepath,
+            "desktop_file": desktop_path,
+            "rows": len(data),
+            "columns": len(headers),
+            "message": f"Excel saved to Desktop: {desktop_path}",
+        }
+    except Exception as e:
+        return {"error": f"Failed to save: {str(e)}"}
 
 
 # ─── System Tools ─────────────────────────────────────────────────────────────

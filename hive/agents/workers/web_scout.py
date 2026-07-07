@@ -1,8 +1,10 @@
 """
 HIVE — Web Scout Worker
-HTTP requests, API calls, scraping, form fills, session management
+HTTP requests, API calls, scraping, form fills, session management.
+Now includes Exa AI search for web queries without URLs.
 """
 
+import os
 import logging
 import httpx
 from typing import Optional
@@ -13,29 +15,33 @@ logger = logging.getLogger(__name__)
 class WebScout:
     @staticmethod
     async def run(description: str, context: dict = None) -> dict:
-        description = description.lower()
+        description_lower = description.lower()
         context = context or {}
 
         try:
             import re
+
+            # Check if there's a URL in the task
             url_match = re.search(r"https?://[^\s]+", description)
             url = url_match.group(0).rstrip(".,;") if url_match else None
 
             if not url:
                 url = _extract_url(description)
 
+            # If no URL, use Exa search
             if not url:
-                return {"status": "error", "error": "No URL found in task description"}
+                return await _exa_search_from_description(description)
 
-            if any(word in description for word in ["login", "sign in", "authenticate"]):
+            # URL-based operations
+            if any(word in description_lower for word in ["login", "sign in", "authenticate"]):
                 result = await _handle_login(url, description)
-            elif any(word in description for word in ["api", "endpoint", "json", "rest"]):
+            elif any(word in description_lower for word in ["api", "endpoint", "json", "rest"]):
                 result = await _call_api(url, description)
-            elif any(word in description for word in ["crawl", "scrape", "find links", "sitemap"]):
+            elif any(word in description_lower for word in ["crawl", "scrape", "find links", "sitemap"]):
                 result = await _crawl_site(url, description)
-            elif any(word in description for word in ["form", "submit", "post data"]):
+            elif any(word in description_lower for word in ["form", "submit", "post data"]):
                 result = await _submit_form(url, description)
-            elif any(word in description for word in ["check", "verify", "status", "health"]):
+            elif any(word in description_lower for word in ["check", "verify", "status", "health"]):
                 result = await _health_check(url)
             else:
                 result = await _fetch_page(url)
@@ -45,6 +51,83 @@ class WebScout:
         except Exception as e:
             logger.error(f"[WebScout] Error: {e}")
             return {"status": "error", "error": str(e)}
+
+
+async def _exa_search_from_description(description: str) -> dict:
+    """Use Exa AI to search when no URL is provided."""
+    api_key = os.environ.get("EXA_API_KEY", "")
+    if not api_key:
+        return {"status": "error", "error": "No URL found and EXA_API_KEY not set. Cannot search."}
+
+    url = "https://api.exa.ai/search"
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    # Extract search query and any domain hints from description
+    query = description.strip()
+    include_domains = []
+
+    # Check for domain hints like "from google maps" or "on yelp"
+    domain_map = {
+        "google maps": ["google.com/maps", "maps.google.com"],
+        "yelp": ["yelp.com"],
+        "yellow pages": ["yellowpages.com"],
+        "justdial": ["justdial.com"],
+        "zomato": ["zomato.com"],
+        "swiggy": ["swiggy.com"],
+        "linkedin": ["linkedin.com"],
+        "github": ["github.com"],
+    }
+
+    desc_lower = description.lower()
+    for hint, domains in domain_map.items():
+        if hint in desc_lower:
+            include_domains.extend(domains)
+
+    payload = {
+        "query": query,
+        "numResults": 10,
+        "type": "auto",
+        "contents": {
+            "text": True,
+        },
+    }
+
+    if include_domains:
+        payload["includeDomains"] = include_domains
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+            if resp.status_code != 200:
+                return {"status": "error", "error": f"Exa API error: {resp.status_code}"}
+
+            data = resp.json()
+            results = []
+            for r in data.get("results", []):
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "published_date": r.get("publishedDate", ""),
+                    "author": r.get("author", ""),
+                    "text": r.get("text", "")[:3000],
+                })
+
+            return {
+                "status": "success",
+                "source": "exa_search",
+                "query": query,
+                "domains_searched": include_domains or ["all"],
+                "results": results,
+                "total": len(results),
+            }
+
+        except httpx.TimeoutException:
+            return {"status": "error", "error": "Exa API request timed out"}
+        except Exception as e:
+            return {"status": "error", "error": f"Exa search failed: {str(e)}"}
 
 
 async def _fetch_page(url: str) -> dict:
@@ -84,11 +167,11 @@ async def _health_check(url: str) -> dict:
 
 async def _call_api(url: str, description: str) -> dict:
     method = "GET"
-    if any(word in description for word in ["post", "create", "submit"]):
+    if any(word in description.lower() for word in ["post", "create", "submit"]):
         method = "POST"
-    elif any(word in description for word in ["put", "update", "edit"]):
+    elif any(word in description.lower() for word in ["put", "update", "edit"]):
         method = "PUT"
-    elif any(word in description for word in ["delete", "remove"]):
+    elif any(word in description.lower() for word in ["delete", "remove"]):
         method = "DELETE"
 
     async with httpx.AsyncClient(timeout=15.0) as client:

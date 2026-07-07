@@ -27,6 +27,8 @@ TOOL_TIERS = {
     "run_command": "moderate",
     "web_fetch": "moderate",
     "web_search": "moderate",
+    "exa_search": "moderate",
+    "create_excel": "safe",
     "git_commit": "sensitive",
     "install_package": "sensitive",
     "delete_file": "dangerous",
@@ -125,6 +127,10 @@ def should_auto_allow(tool_name: str, target: str = "") -> bool:
     tier = get_tool_tier(tool_name)
 
     if tier == "safe":
+        return True
+
+    # Web search tools don't need path checks — always auto-allow
+    if tool_name in ("web_search", "exa_search", "web_fetch"):
         return True
 
     if tier == "moderate" and target:

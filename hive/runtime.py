@@ -80,6 +80,10 @@ class AgentRuntime:
         agent_state.task_started()
 
         try:
+            # First iteration forces tool usage; subsequent iterations use auto
+            # so the model can respond with text after getting tool results
+            current_tool_choice = "required"
+            
             while iteration < MAX_LOOP_ITERATIONS:
                 iteration += 1
                 
@@ -87,7 +91,7 @@ class AgentRuntime:
                 full_content = ""
                 tool_calls = []
                 
-                async for chunk in self.llm.stream(conversation, tools=tools_schema):
+                async for chunk in self.llm.stream(conversation, tools=tools_schema, tool_choice=current_tool_choice):
                     delta = chunk.get("choices", [{}])[0].get("delta", {})
                     
                     # Stream content token by token
@@ -110,11 +114,22 @@ class AgentRuntime:
                             if tc.get("function", {}).get("arguments"):
                                 tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
 
+                import logging
+                _log = logging.getLogger("hive.runtime")
+                _log.warning(f"[RUNTIME] Iteration {iteration}: content_len={len(full_content)}, tool_calls={len(tool_calls)}")
+                if tool_calls:
+                    for tc in tool_calls:
+                        _log.warning(f"[RUNTIME] Tool: {tc['function']['name']}({tc['function']['arguments'][:200]})")
+
                 if not tool_calls:
                     agent_state.task_completed(success=True)
                     return full_content or "I did not receive a response from the model."
 
-                assistant_msg = {"role": "assistant", "content": full_content, "tool_calls": tool_calls}
+                # After first tool call, switch to auto so model can respond with text
+                current_tool_choice = "auto"
+
+                # When tool_calls present, content should be empty to avoid API issues
+                assistant_msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
                 conversation.append(assistant_msg)
 
                 for tc in tool_calls:
@@ -181,6 +196,7 @@ class AgentRuntime:
                         await on_tool_call(tool_name, args)
 
                     result = await execute_tool(tool_name, **args)
+                    _log.warning(f"[RUNTIME] Tool {tool_name} result: {str(result)[:300]}")
 
                     conversation.append({
                         "role": "tool",
@@ -208,6 +224,9 @@ class AgentRuntime:
         current_response = []
         
         try:
+            # First iteration forces tool usage; subsequent iterations use auto
+            current_tool_choice = "required"
+            
             while iteration < MAX_LOOP_ITERATIONS:
                 iteration += 1
                 
@@ -215,7 +234,7 @@ class AgentRuntime:
                 full_content = ""
                 tool_calls = []
                 
-                async for chunk in self.llm.stream(conversation, tools=tools_schema):
+                async for chunk in self.llm.stream(conversation, tools=tools_schema, tool_choice=current_tool_choice):
                     delta = chunk.get("choices", [{}])[0].get("delta", {})
                     
                     # Stream content token by token
@@ -295,6 +314,9 @@ class AgentRuntime:
                         "tool_call_id": tc.get("id", ""),
                         "content": json.dumps(result),
                     })
+                
+                # After first tool call, switch to auto so model can respond with text
+                current_tool_choice = "auto"
             
             agent_state.task_completed(success=False)
             return f"Max iterations reached. {full_content}" if full_content else "Max iterations reached."

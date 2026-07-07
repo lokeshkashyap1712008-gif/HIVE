@@ -93,11 +93,8 @@ interface BeeSwarmProps {
 }
 
 export function BeeSwarm({ beeFrame, honeyFrame, agents }: BeeSwarmProps) {
-  const working = agents.filter(a => a.status === 'working' || a.status === 'spawning');
-  const done = agents.filter(a => a.status === 'done');
-  const failed = agents.filter(a => a.status === 'failed');
-
-  const buffer = useMemo(() => {
+  // Memoize counts and buffer together — only recompute when beeFrame or agents change
+  const { buffer, workingCount, doneCount, failedCount } = useMemo(() => {
     const buf = new PixelBuffer(20, 16);
     const wingFrameIdx = beeFrame % 4;
 
@@ -141,17 +138,23 @@ export function BeeSwarm({ beeFrame, honeyFrame, agents }: BeeSwarmProps) {
       }
     }
 
-    return buf;
-  }, [beeFrame, honeyFrame, agents]);
+    return {
+      buffer: buf,
+      workingCount: agents.filter(a => a.status === 'working' || a.status === 'spawning').length,
+      doneCount: agents.filter(a => a.status === 'done').length,
+      failedCount: agents.filter(a => a.status === 'failed').length,
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beeFrame, agents]);
 
   return (
     <Box flexDirection="column">
       <Text color="yellow" bold>THE HIVE</Text>
       <PixelCanvas buffer={buffer} />
       <Text> </Text>
-      <Text color="yellow">active:{working.length} </Text>
-      <Text color="green">done:{done.length} </Text>
-      <Text color="red">fail:{failed.length}</Text>
+      <Text color="yellow">active:{workingCount} </Text>
+      <Text color="green">done:{doneCount} </Text>
+      <Text color="red">fail:{failedCount}</Text>
     </Box>
   );
 }

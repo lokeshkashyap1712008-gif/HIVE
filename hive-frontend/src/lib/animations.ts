@@ -30,29 +30,29 @@ export interface HiveAnimation {
 }
 
 // ============================================================
-// HiveHeader coordinates (42x14 canvas — compact)
+// HiveHeader coordinates (42x28 canvas — big hive with leaves)
 // ============================================================
 
-// Compact hive at (11, 4), 20 wide x 10 tall, entrance at relative x=8-10, y=5-6
-// Absolute entrance center: 11+9=20, 4+5=9
-export const HIVE_ENTRANCE = { x: 20, y: 9 };
+// Big hive at (7, 4), 28 wide x 24 tall, entrance at relative x=12-15, y=10-12
+// Absolute entrance center: 7+13=20, 4+11=15
+export const HIVE_ENTRANCE = { x: 20, y: 15 };
 
 export const WORK_TARGETS: Record<string, { x: number; y: number }> = {
-  code:     { x: 37, y: 1 },
-  research: { x: 37, y: 3 },
-  general:  { x: 37, y: 5 },
-  security: { x: 37, y: 7 },
-  forge:    { x: 37, y: 2 },
-  cleanup:  { x: 37, y: 6 },
-  judge:    { x: 37, y: 4 },
-  safety:   { x: 37, y: 5 },
+  code:     { x: 38, y: 5 },
+  research: { x: 38, y: 9 },
+  general:  { x: 38, y: 13 },
+  security: { x: 38, y: 17 },
+  forge:    { x: 38, y: 7 },
+  cleanup:  { x: 38, y: 15 },
+  judge:    { x: 38, y: 11 },
+  safety:   { x: 38, y: 13 },
 };
 
 // Idle bees roam near the hive entrance (outside the hive body)
 export const IDLE_POSITIONS = [
-  { x: 17, y: 8 },
-  { x: 23, y: 8 },
-  { x: 20, y: 6 },
+  { x: 17, y: 13 },
+  { x: 23, y: 13 },
+  { x: 20, y: 12 },
 ];
 
 // ============================================================
@@ -92,10 +92,10 @@ function randomRoamTarget(scale: 'header' | 'swarm'): { x: number; y: number } {
       y: 8 + Math.floor(Math.random() * 6),
     };
   }
-  // Header: roam around the hive area (x: 5-38, y: 4-12)
+  // Header: roam around the hive area (x: 5-38, y: 6-26)
   return {
     x: 5 + Math.floor(Math.random() * 33),
-    y: 4 + Math.floor(Math.random() * 8),
+    y: 6 + Math.floor(Math.random() * 20),
   };
 }
 

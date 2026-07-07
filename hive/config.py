@@ -17,6 +17,9 @@ DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen-max")
 QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
+# Exa — Web Search
+EXA_API_KEY = os.environ.get("EXA_API_KEY", "")
+
 # Runtime
 MAX_AGENTS = int(os.environ.get("HIVE_MAX_AGENTS", "4"))
 MAX_MESSAGES = int(os.environ.get("HIVE_MAX_MESSAGES", "50"))
