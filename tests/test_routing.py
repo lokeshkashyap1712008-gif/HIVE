@@ -7,8 +7,8 @@ def test_simple_click_uses_playwright():
     assert _select_browser_worker("click the search button on the page") == "browser_agent"
 
 
-def test_login_uses_browser_use():
-    assert _select_browser_worker("login to github with email and password") == "browser_use_worker"
+def test_login_uses_browser_agent():
+    assert _select_browser_worker("login to github with email and password") == "browser_agent"
 
 
 def test_checkout_uses_payment_agent():

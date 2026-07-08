@@ -65,8 +65,17 @@ def _is_2fa_page(elements: list) -> bool:
     return False
 
 
-def _is_captcha_page(elements: list) -> bool:
-    indicators = ["captcha", "recaptcha", "hcaptcha", "verify you are human", "i'm not a robot"]
+def _is_captcha_page(elements: list, url: str = "") -> bool:
+    # Interactive challenge pages usually change the URL (e.g. challenge.spotify.com,
+    # accounts.google.com/.../challenge). Invisible reCAPTCHA v3 does NOT — and must
+    # NOT be treated as a challenge, since it needs no human interaction.
+    url_lower = (url or "").lower()
+    if any(seg in url_lower for seg in ["/challenge", "challenge.", "/captcha", "recaptcha/api2/bframe"]):
+        return True
+
+    # A visible "I'm not a robot" / hCaptcha widget in the element list
+    indicators = ["i'm not a robot", "verify you are human", "select all images",
+                  "hcaptcha", "press and hold", "confirm you're human"]
     for el in elements:
         combined = " ".join([
             el.get("text", ""), el.get("placeholder", ""), el.get("ariaLabel", ""),
@@ -119,8 +128,30 @@ async def _decide_next_action(task: str, page_state: dict, credentials: dict, st
 
     llm = QwenClient(api_key=DASHSCOPE_API_KEY, model=QWEN_MODEL)
 
-    elements = page_state.get("elements", [])
-    elements_text = json.dumps(elements[:25], indent=2)
+    # Filter elements: skip skeleton/loading/placeholder elements
+    raw_elements = page_state.get("elements", [])
+    primary = []   # form fields and buttons — always shown to the LLM
+    secondary = []  # links and everything else
+    for el in raw_elements:
+        test_id = el.get("testId", "")
+        text = el.get("text", "")
+        tag = el.get("tag", "")
+        aria = el.get("ariaLabel", "")
+        placeholder = el.get("placeholder", "")
+        role = el.get("role", "")
+        # Skip skeleton and placeholder elements
+        if "skeleton" in test_id or "sentinel" in test_id or "resizer" in test_id:
+            continue
+        # Skip elements with no identifying info at all (likely decorative)
+        if not any([text, test_id, aria, placeholder]) and tag not in ("input", "textarea", "select", "button"):
+            continue
+        if tag in ("input", "textarea", "select", "button") or role == "button":
+            primary.append(el)
+        else:
+            secondary.append(el)
+    # Form fields/buttons first so the submit button is never truncated away
+    elements = (primary + secondary)[:30]
+    elements_text = json.dumps(elements, indent=2)
 
     retry_text = ""
     if retry > 0:
@@ -142,7 +173,7 @@ TASK: {task}
 CURRENT PAGE URL: {page_state.get('url', 'unknown')}
 PAGE TITLE: {page_state.get('title', 'unknown')}
 
-PAGE ELEMENTS (index, tag, type, text, placeholder):
+PAGE ELEMENTS (index, tag, text, testid):
 {elements_text}
 
 CREDENTIAL KEYS AVAILABLE (use ${{key}} placeholders): {list(credentials.keys())}
@@ -164,6 +195,21 @@ RULES:
 - If 2FA/code input detected: {{"action": "wait_for_2fa"}}
 - If task complete: {{"action": "done"}}
 - Only ONE action per response
+- LOOK for buttons with text like "Log in", "Sign in", "Next", "Continue", "Submit" — click them
+- Do NOT stop after filling a field — always click the submit/next button
+
+MODERN TWO-STEP LOGIN (Spotify, Google, Microsoft, etc.):
+- STEP 1: The first page often shows ONLY a username/email field + a "Continue" or "Next" button (NO password field yet).
+  → Type the email into that field, THEN click "Continue"/"Next".
+- STEP 2: After that, a password field appears (sometimes you must first click a "Log in with a password" link).
+  → If you see a "Log in with password" / "Use password" link and NO password field, click that link first.
+  → Then type the password and click "Log in"/"Continue".
+- NEVER try to type the password on a page that has no password field — click Continue/Next first.
+- If the email field is already filled (has a value) do NOT retype it; move on to Continue or the password step.
+- "Continue" and "Next" ARE submit buttons — clicking them is required to advance.
+- Ignore "Continue with Google/Apple/Facebook/phone" links unless the task explicitly asks for social login.
+- If you see credentials available and an empty email field, type the email FIRST
+- The primary email/password submit button (not a social-login link) is the PRIMARY target
 {checkout_rule}
 {retry_text}"""
 
@@ -279,6 +325,120 @@ async def _save_session_after_login(site: str, flow: str = "login") -> str:
     return session_name
 
 
+def _inject_vault_credentials(description: str, credentials: dict) -> dict:
+    """Check vault for stored credentials and merge them into the credentials dict."""
+    import re
+    from hive.browser.vault import get_credential
+
+    desc_lower = description.lower()
+
+    # Only inject if task mentions login-related actions
+    login_keywords = ["log in", "login", "sign in", "signin", "authenticate"]
+    if not any(kw in desc_lower for kw in login_keywords):
+        return credentials
+
+    # Extract site name from task
+    url_match = re.search(r'https?://([^\s/]+)', description)
+    if url_match:
+        site = url_match.group(1).lower().replace("www.", "")
+    else:
+        brand_map = {
+            "spotify": "spotify.com",
+            "github": "github.com",
+            "google": "google.com",
+            "amazon": "amazon.com",
+            "twitter": "twitter.com",
+            "x": "twitter.com",
+            "facebook": "facebook.com",
+            "instagram": "instagram.com",
+            "linkedin": "linkedin.com",
+            "netflix": "netflix.com",
+            "youtube": "youtube.com",
+        }
+        site = ""
+        for brand, domain in brand_map.items():
+            if brand in desc_lower:
+                site = domain
+                break
+        if not site:
+            site_match = re.search(r'(?:for|on|at|to)\s+(\w+)', description, re.IGNORECASE)
+            if site_match:
+                candidate = site_match.group(1).lower()
+                if len(candidate) > 2 and candidate not in ("my", "the", "a", "an", "this", "that", "and", "or"):
+                    site = candidate + ".com"
+
+    if not site:
+        return credentials
+
+    # Look up credentials in vault
+    cred = get_credential(site)
+    if not cred:
+        site_bare = site.split(".")[0]
+        cred = get_credential(site_bare)
+
+    if not cred:
+        logger.info("[BrowserAgent] No vault credentials found for %s", site)
+        return credentials
+
+    # Merge vault credentials (vault takes priority over context)
+    email = cred.get("username", "")
+    password = cred.get("password", "")
+
+    if email and not credentials.get("email"):
+        credentials["email"] = email
+    if password and not credentials.get("password"):
+        credentials["password"] = password
+    if email:
+        credentials["username"] = email
+
+    logger.info("[BrowserAgent] Injected vault credentials for %s", site)
+    return credentials
+
+
+def _parse_spotify_intent(description: str):
+    """Return (action, query) for Spotify playback tasks, else None."""
+    d = description.lower()
+    if "spotify" not in d:
+        return None
+    if any(k in d for k in ["pause", "stop playing", "stop the music", "stop music"]):
+        return ("pause", "")
+    if any(k in d for k in ["resume", "unpause", "continue playing"]):
+        return ("resume", "")
+    if any(k in d for k in ["next song", "next track", "skip song", "skip track", "next", "skip"]):
+        return ("next", "")
+    if any(k in d for k in ["previous", "prev song", "prev track", "go back a song", "last song"]):
+        return ("previous", "")
+    if any(k in d for k in ["what's playing", "whats playing", "what is playing", "now playing",
+                             "currently playing", "current song", "current track", "what song"]):
+        return ("now_playing", "")
+    if any(k in d for k in ["list playlists", "my playlists", "show playlists", "what playlists"]):
+        return ("list_playlists", "")
+    # "play my playlist" / "play a playlist I have" → first sidebar playlist
+    if re.search(r"\bplay\b", d) and any(k in d for k in ["my playlist", "a playlist", "one of my", "playlist i have"]):
+        return ("play_playlist", "")
+    # Playlist requests (free accounts can play these on the web player)
+    if "playlist" in d and re.search(r"\bplay\b", d):
+        q = description
+        for junk in ["on spotify", "in spotify", "using spotify", "spotify", "please", "for me",
+                     "can you", "could you", "my", "a", "the", "playlist", "play", "one", "i have",
+                     "go to", "and it", "just", "somehow", "lokesh"]:
+            q = re.sub(rf"\b{junk}\b", " ", q, flags=re.IGNORECASE)
+        q = re.sub(r"\s+", " ", q).strip(" .,-")
+        return ("play_playlist", q)
+    if re.search(r"\bplay\b", d) and any(k in d for k in ["liked songs", "my library"]):
+        return ("play_playlist", "Liked Songs")
+    # Use word boundary so "playing" doesn't trigger a play action
+    if re.search(r"\bplay\b", d):
+        # Extract the query: strip common filler around the song name
+        q = description
+        for junk in ["on spotify", "in spotify", "using spotify", "spotify", "please", "for me",
+                     "can you", "could you", "the song", "a song", "song", "track", "play"]:
+            q = re.sub(rf"\b{junk}\b", " ", q, flags=re.IGNORECASE)
+        q = re.sub(r"\s+", " ", q).strip(" .,-")
+        return ("play", q)
+    return None
+
+
 async def run(description: str, context: dict = None) -> dict:
     """Main entry point for browser agent."""
     context = context or {}
@@ -287,8 +447,26 @@ async def run(description: str, context: dict = None) -> dict:
     checkout_mode = context.get("checkout_mode", False)
     human_confirmed = context.get("human_confirmed", False)
 
+    # Fast path: deterministic Spotify control (search/play/pause/next), which is
+    # far more reliable than the generic LLM loop on Spotify's SPA.
+    spotify_intent = _parse_spotify_intent(description)
+    if spotify_intent:
+        try:
+            from hive.browser import spotify
+            action, query = spotify_intent
+            logger.info("[BrowserAgent] Spotify fast-path: action=%s query=%r", action, query)
+            result = await spotify.control(action, query)
+            return {"status": "completed", "result": result, "steps": 1,
+                    "url": "https://open.spotify.com/"}
+        except Exception as e:
+            logger.warning("[BrowserAgent] Spotify fast-path failed, falling back: %s", e)
+
     try:
         credentials = _load_credentials(description, context)
+
+        # Inject vault credentials if task mentions login and vault has stored creds
+        credentials = _inject_vault_credentials(description, credentials)
+
         logger.info("[BrowserAgent] Starting: %s...", description[:80])
         logger.info("[BrowserAgent] Credential keys: %s", list(credentials.keys()))
 
@@ -331,7 +509,7 @@ async def run(description: str, context: dict = None) -> dict:
                 step + 1, page_state.get("url", "")[:60], page_state.get("count", 0),
             )
 
-            if _is_captcha_page(page_state.get("elements", [])):
+            if _is_captcha_page(page_state.get("elements", []), page_state.get("url", "")):
                 from hive.interactive import prompt_captcha_handoff
                 site = _extract_site_from_url(page_state.get("url", ""))
                 solved = await prompt_captcha_handoff(site or "unknown", page_state.get("url", ""))
@@ -368,8 +546,9 @@ async def run(description: str, context: dict = None) -> dict:
 
             if _is_2fa_page(page_state.get("elements", [])):
                 code = None
-                # Try disposable email first
-                code_result = await execute_tool("browser_wait_for_code", timeout=15)
+                # Try email inboxes first (disposable inbox, then personal IMAP)
+                sender_hint = site.split(".")[0] if site != "unknown" else ""
+                code_result = await execute_tool("browser_wait_for_code", timeout=60, sender_hint=sender_hint)
                 if "code" in code_result:
                     code = code_result["code"]
                 else:
@@ -427,7 +606,8 @@ async def run(description: str, context: dict = None) -> dict:
                     }
 
                 if action.get("action") == "wait_for_2fa":
-                    code_result = await execute_tool("browser_wait_for_code", timeout=45)
+                    sender_hint = site.split(".")[0] if site != "unknown" else ""
+                    code_result = await execute_tool("browser_wait_for_code", timeout=60, sender_hint=sender_hint)
                     if "code" in code_result:
                         otp_action = {"action": "type", "text": code_result["code"], "press_enter": True, "index": 0}
                         await _execute_action(otp_action, credentials)

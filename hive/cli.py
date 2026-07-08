@@ -267,6 +267,14 @@ class HiveCLI:
         self.leader.shutdown()
         await self.db.close()
 
+        # Close browser pool to kill any open Chrome windows
+        try:
+            from hive.browser.pool import get_pool
+            pool = get_pool()
+            await pool.close_all()
+        except Exception:
+            pass
+
     async def _handle_message(self, text: str):
         max_retries = 2
         dash = get_dashboard()

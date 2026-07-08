@@ -14,7 +14,7 @@ SKILLS_DIR = HIVE_HOME / "skills"
 
 # LLM
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
-QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen-max")
+QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.7-plus")
 QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 # Browser automation
@@ -24,6 +24,25 @@ BROWSER_SCREENSHOT_DIR = Path(
 CHROME_AUTOMATION_PROFILE = Path(
     os.environ.get("HIVE_CHROME_PROFILE", str(HIVE_HOME / "chrome-automation"))
 )
+
+# Reuse the user's REAL Chrome login state (cookies/sessions). When enabled,
+# HIVE snapshots the real Chrome profile (read-only copy — your original is
+# never touched) so the automated browser inherits sites you're already
+# logged into (Spotify, Google, etc.) and can skip the login form entirely.
+HIVE_CHROME_PROFILE_REUSE = os.environ.get(
+    "HIVE_CHROME_PROFILE_REUSE", "false"
+).lower() in ("1", "true", "yes")
+# Which Chrome profile to copy from (display/dir name, e.g. "Default", "Profile 1")
+HIVE_CHROME_SOURCE_PROFILE = os.environ.get("HIVE_CHROME_SOURCE_PROFILE", "Default")
+# Optional explicit path to Chrome's "User Data" dir (auto-detected if empty)
+HIVE_CHROME_USER_DATA_DIR = os.environ.get("HIVE_CHROME_USER_DATA_DIR", "")
+
+# Which browser binary Playwright drives:
+#   "chromium" (default) — Playwright's bundled Chromium
+#   "chrome"             — your REAL installed Google Chrome (better fingerprint,
+#                          higher chance of passing login/bot challenges on hard
+#                          sites like Spotify). Requires Chrome to be installed.
+HIVE_BROWSER_CHANNEL = os.environ.get("HIVE_BROWSER_CHANNEL", "chromium").strip().lower()
 
 # Checkout / payments guardrails
 HIVE_CHECKOUT_AUTONOMOUS = os.environ.get("HIVE_CHECKOUT_AUTONOMOUS", "false").lower() in ("1", "true", "yes")

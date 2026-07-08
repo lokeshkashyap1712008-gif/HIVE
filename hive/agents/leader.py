@@ -53,22 +53,57 @@ WORKER_ALIASES = {
 }
 
 
+def _is_vault_task(description: str) -> bool:
+    """Detect if a task is about storing/reading credentials or cards in the vault."""
+    desc_lower = description.lower()
+    vault_actions = ["store", "save", "add", "encrypt", "store my", "save my"]
+    vault_objects = [
+        "credentials", "password", "login", "card", "credit card",
+        "debit card", "account details", "api key", "token",
+    ]
+    has_action = any(a in desc_lower for a in vault_actions)
+    has_object = any(o in desc_lower for o in vault_objects)
+    # Must have BOTH an action AND an object to be a vault task
+    # "store my spotify credentials" = vault task
+    # "login to spotify" = NOT a vault task
+    return has_action and has_object
+
+
+# Consumer sites that clearly imply browser automation when mentioned.
+KNOWN_BROWSER_SITES = [
+    "spotify", "youtube", "gmail", "google", "github", "netflix", "amazon",
+    "twitter", "x.com", "instagram", "facebook", "linkedin", "reddit",
+    "discord", "tiktok", "outlook", "hotmail", "microsoft", "apple", "icloud",
+    "paypal", "whatsapp", "telegram", "twitch", "pinterest", "quora",
+]
+
+
 def _is_browser_task(description: str) -> bool:
     """Detect if a task requires browser automation."""
     desc_lower = description.lower()
     browser_keywords = [
-        "login", "sign in", "log in", "authenticate",
+        "login", "sign in", "log in", "logged in", "authenticate",
         "click", "fill form", "fill out", "submit form",
-        "navigate to", "open website", "open page",
+        "navigate to", "open website", "open page", "go to", "visit", "browse",
         "star", "unstar", "like", "follow", "unfollow",
         "add to cart", "checkout", "buy", "purchase",
         "sign up", "create account", "register",
-        "browser", "website", "web page",
+        "browser", "website", "web page", "web player",
         "type in", "enter text", "input",
         "2fa", "otp", "verification code",
         "pay", "payment", "order",
+        "play ", "search for", "download from",
     ]
-    return any(kw in desc_lower for kw in browser_keywords)
+    if any(kw in desc_lower for kw in browser_keywords):
+        return True
+    # A URL anywhere → browser task
+    if "http://" in desc_lower or "https://" in desc_lower or "www." in desc_lower:
+        return True
+    # "open <site>" / mention of a known consumer site → browser task
+    if any(site in desc_lower for site in KNOWN_BROWSER_SITES):
+        if any(v in desc_lower for v in ["open", "go", "visit", "play", "search", "log", "sign", "check", "browse", "account", "profile", "my "]):
+            return True
+    return False
 
 
 def _is_checkout_task(description: str) -> bool:
@@ -98,47 +133,24 @@ def _select_browser_worker(description: str) -> str:
     if _is_signup_task(description):
         return "browser_agent"
 
-    # Complex / saved-login tasks → Browser Use
+    # Complex / saved-login tasks → Browser Use (check BEFORE simple login)
     browser_use_signals = [
         "saved login", "chrome profile", "already logged in",
         "multi-step", "complex", "saved credentials",
     ]
-    login_signals = ["login", "sign in", "log in", "authenticate", "credentials", "password"]
     if any(s in desc_lower for s in browser_use_signals):
         return "browser_use_worker"
+
+    # Login tasks → browser_agent. It drives the pool browser, which uses a
+    # PERSISTENT profile (and can drive real Chrome via HIVE_BROWSER_CHANNEL).
+    # Once you've logged into a site there, the session persists and future
+    # runs skip the login form entirely. This is the engine that holds the
+    # saved Spotify/Google/etc. sessions, so hard logins belong here too.
+    login_signals = ["login", "sign in", "log in", "authenticate", "log into", "sign into"]
     if any(s in desc_lower for s in login_signals):
-        # If we've built a strong playbook for this site, we may be able to
-        # reuse the simpler Playwright browser_agent + saved session.
-        try:
-            import re
-            from hive.playbooks import load_playbook, site_key
+        return "browser_agent"
 
-            m = re.search(r"(https?://[^\s]+)", description)
-            if m:
-                host = m.group(1).split("//", 1)[1].split("/", 1)[0]
-            else:
-                # Fallbacks for common brands mentioned without URLs.
-                brand_to_domain = {
-                    "github": "github.com",
-                    "google": "google.com",
-                    "gmail": "google.com",
-                    "amazon": "amazon.com",
-                    "shopify": "shopify.com",
-                }
-                host = next((d for b, d in brand_to_domain.items() if b in desc_lower), "")
-
-            if host:
-                sk = site_key(host)
-                pb = load_playbook(sk)
-                trust = int(pb.get("trust_score", 0))
-                has_session = bool((pb.get("login") or {}).get("session_name"))
-                if trust >= 70 and has_session:
-                    return "browser_agent"
-        except Exception:
-            pass
-        return "browser_use_worker"
-
-    # Simple headless tasks → Playwright browser_agent
+    # Everything else → Playwright browser_agent
     return "browser_agent"
 
 
@@ -165,6 +177,15 @@ class HiveLeader:
         self.bus.register_agent(agent_id, "leader")
 
     async def decompose_task(self, description: str) -> List[dict]:
+        # Route vault/storage tasks to code_runner (calls vault API directly)
+        if _is_vault_task(description):
+            return [{
+                "description": description,
+                "worker_type": "code_runner",
+                "priority": "high",
+                "group": "default",
+            }]
+
         # Route browser tasks to the best worker
         if _is_browser_task(description):
             worker = _select_browser_worker(description)

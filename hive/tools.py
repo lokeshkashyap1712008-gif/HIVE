@@ -354,9 +354,10 @@ TOOLS = {
         "parameters": {},
     },
     "browser_wait_for_code": {
-        "description": "Wait for a verification code to arrive in the disposable inbox",
+        "description": "Wait for a verification code. Checks the disposable inbox if one was created, otherwise reads the user's personal email over IMAP (HIVE_IMAP_USER/PASSWORD or vault credential 'imap').",
         "parameters": {
             "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
+            "sender_hint": {"type": "string", "description": "Only match emails whose sender contains this text, e.g. 'spotify' (optional)"},
         },
     },
     # ─── Browser Use Tool (Chrome Profile) ──────────────────────
@@ -366,6 +367,14 @@ TOOLS = {
             "task": {"type": "string", "description": "What to do in the browser"},
             "headless": {"type": "boolean", "description": "Run invisibly (default false)"},
             "max_steps": {"type": "integer", "description": "Max steps (default 30)"},
+        },
+    },
+    # ─── Spotify Control (uses the logged-in persistent browser) ─
+    "spotify_control": {
+        "description": "Control the Spotify web player (must be logged in). Actions: play_playlist (best for free accounts — plays your own playlists), list_playlists, play (search a song), pause, resume, next, previous, now_playing.",
+        "parameters": {
+            "action": {"type": "string", "description": "play_playlist | list_playlists | play | pause | resume | next | previous | now_playing"},
+            "query": {"type": "string", "description": "Playlist or song name (play_playlist/play). Omit query to play your first sidebar playlist."},
         },
     },
     # ─── Vault Tools ────────────────────────────────────────────
@@ -631,7 +640,11 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
             elif tool_name == "browser_create_inbox":
                 result = await _browser_create_inbox()
             elif tool_name == "browser_wait_for_code":
-                result = await _browser_wait_for_code(kwargs.get("timeout", 30))
+                result = await _browser_wait_for_code(kwargs.get("timeout", 30), kwargs.get("sender_hint", ""))
+
+            elif tool_name == "spotify_control":
+                from hive.browser import spotify
+                result = await spotify.control(kwargs.get("action", ""), kwargs.get("query", ""))
             # ─── Browser Use Tool (Chrome Profile) ──────────────
             elif tool_name == "browser_use_task":
                 result = await _browser_use_task(
@@ -1672,6 +1685,85 @@ async def _list_zip(source: str) -> dict:
 
 # ─── Browser Tool Implementations ──────────────────────────────────
 
+# Single source of truth for interactive-element discovery.
+# Tags each discovered element with data-hive-index so browser_click /
+# browser_type resolve the EXACT element browser_inspect reported —
+# previously each tool rebuilt its own list and the indices didn't match
+# (e.g. hidden CSRF inputs shifted click targets).
+_INSPECT_TAG_JS = """() => {
+    // Clear stale tags from a previous inspect
+    document.querySelectorAll('[data-hive-index]').forEach(el => el.removeAttribute('data-hive-index'));
+
+    const selectors = [
+        'input', 'button', 'a', 'select', 'textarea',
+        '[role="button"]', '[role="link"]', '[role="tab"]',
+        '[role="checkbox"]', '[role="radio"]', '[role="combobox"]',
+        '[role="switch"]', '[role="menuitem"]', '[role="option"]',
+        '[onclick]', '[contenteditable]',
+        '[data-testid]',
+        'form[role="search"]',
+    ];
+    // NOTE: querySelectorAll never returns the same node twice, so no
+    // dedup is needed. (The old text-based dedup key collapsed distinct
+    // empty inputs — e.g. username + password fields — into one entry.)
+    const els = document.querySelectorAll(selectors.join(', '));
+    const results = [];
+    for (const el of els) {
+        const tag = el.tagName.toLowerCase();
+        const type = el.type || '';
+
+        // Skip invisible/hidden elements (hidden inputs, offscreen nodes)
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) continue;
+        if (type === 'hidden') continue;
+
+        const text = el.textContent?.trim().substring(0, 60) || '';
+        const placeholder = el.placeholder || '';
+        const ariaLabel = el.getAttribute('aria-label') || '';
+        const role = el.getAttribute('role') || '';
+        const testId = el.getAttribute('data-testid') || '';
+        const required = el.required || false;
+        const disabled = el.disabled || false;
+
+        let selector = '';
+        if (testId) selector = '[data-testid="' + testId + '"]';
+        else if (el.id) selector = '#' + el.id;
+        else if (el.name) selector = tag + '[name="' + el.name + '"]';
+
+        el.setAttribute('data-hive-index', String(results.length));
+
+        results.push({
+            index: results.length,
+            tag: tag,
+            type: type,
+            text: text,
+            placeholder: placeholder,
+            ariaLabel: ariaLabel,
+            role: role,
+            testId: testId,
+            required: required,
+            disabled: disabled,
+            selector: selector,
+        });
+        if (results.length >= 50) break;
+    }
+    return results;
+}"""
+
+
+async def _get_indexed_element(page, index: int):
+    """Resolve an element by the index browser_inspect reported.
+
+    Uses the data-hive-index attribute stamped during inspect; re-tags the
+    page if the attribute is gone (e.g. after a re-render or navigation).
+    """
+    el = await page.query_selector(f'[data-hive-index="{index}"]')
+    if el is None:
+        await page.evaluate(_INSPECT_TAG_JS)
+        el = await page.query_selector(f'[data-hive-index="{index}"]')
+    return el
+
+
 async def _browser_open(url: str) -> dict:
     """Open a URL in the browser."""
     from hive.browser.pool import get_pool
@@ -1679,6 +1771,8 @@ async def _browser_open(url: str) -> dict:
     try:
         page = await pool.get_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # Wait extra time for React/SPA to render
+        await page.wait_for_timeout(3000)
         title = await page.title()
         return {"status": "opened", "url": page.url, "title": title}
     except Exception as e:
@@ -1692,20 +1786,20 @@ async def _browser_click(selector: str = "", index: int = -1) -> dict:
     try:
         page = await pool.get_page()
         if index >= 0:
-            # Click by index from browser_inspect
-            elements = await page.query_selector_all(
-                'a, button, input, select, textarea, [role="button"], [onclick], [role="link"]'
-            )
-            if index < len(elements):
-                el = elements[index]
-                # Try normal click first, fall back to JavaScript click
-                try:
-                    await el.click(timeout=5000)
-                except Exception:
-                    # JavaScript click fallback (bypasses bot detection)
-                    await el.evaluate("(el) => el.click()")
-            else:
-                return {"error": f"Index {index} out of range (found {len(elements)} elements)"}
+            # Resolve the exact element browser_inspect reported at this index
+            el = await _get_indexed_element(page, index)
+            if el is None:
+                return {"error": f"Index {index} not found on page (run browser_inspect again)"}
+            try:
+                await el.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            # Try normal click first, fall back to JavaScript click
+            try:
+                await el.click(timeout=5000)
+            except Exception:
+                # JavaScript click fallback (bypasses bot detection)
+                await el.evaluate("(el) => el.click()")
         elif selector:
             try:
                 await page.click(selector, timeout=5000)
@@ -1728,6 +1822,66 @@ async def _browser_click(selector: str = "", index: int = -1) -> dict:
         return {"error": str(e)}
 
 
+async def _type_like_human(page, el, text: str, press_enter: bool) -> None:
+    """Type into an element using REAL key events (via CDP), like a person.
+
+    This is far less detectable than setting el.value in JS. Falls back to the
+    native-value-setter approach only if real typing didn't register (some
+    exotic controlled inputs).
+    """
+    try:
+        await el.scroll_into_view_if_needed(timeout=3000)
+    except Exception:
+        pass
+
+    # Focus and clear any existing value with a real select-all + delete
+    try:
+        await el.click(timeout=3000)
+    except Exception:
+        try:
+            await el.focus()
+        except Exception:
+            pass
+    try:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Delete")
+    except Exception:
+        pass
+
+    typed_ok = True
+    try:
+        # press_sequentially issues real keydown/keypress/input/keyup events
+        await el.press_sequentially(text, delay=45)
+    except Exception:
+        try:
+            await el.type(text, delay=45)
+        except Exception:
+            typed_ok = False
+
+    # Verify the value took; fall back to native setter for stubborn inputs
+    if not typed_ok:
+        try:
+            await el.evaluate("""(el, text) => {
+                el.focus();
+                const proto = el.tagName === 'TEXTAREA'
+                    ? window.HTMLTextAreaElement.prototype
+                    : window.HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+                if (setter && setter.set) setter.set.call(el, text);
+                else el.value = text;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }""", text)
+        except Exception:
+            pass
+
+    if press_enter:
+        try:
+            await el.press("Enter")
+        except Exception:
+            await page.keyboard.press("Enter")
+
+
 async def _browser_type(selector: str = "", text: str = "", press_enter: bool = False, index: int = -1, sensitive_data: dict = None) -> dict:
     """Type text into an input field by index (from browser_inspect) or CSS selector."""
     from hive.browser.pool import get_pool
@@ -1742,32 +1896,14 @@ async def _browser_type(selector: str = "", text: str = "", press_enter: bool = 
                 actual_text = actual_text.replace(f"${{{key}}}", str(value))
         
         if index >= 0:
-            # Type by index from browser_inspect
-            elements = await page.query_selector_all('input, textarea, select, [contenteditable]')
-            if index < len(elements):
-                el = elements[index]
-                # Use JavaScript to fill (bypasses bot detection)
-                await el.evaluate("""(el, text) => {
-                    el.focus();
-                    el.value = text;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }""", actual_text)
-                if press_enter:
-                    await el.press("Enter")
-            else:
-                return {"error": f"Index {index} out of range (found {len(elements)} inputs)"}
+            # Resolve the exact element browser_inspect reported at this index
+            el = await _get_indexed_element(page, index)
+            if el is None:
+                return {"error": f"Index {index} not found on page (run browser_inspect again)"}
+            await _type_like_human(page, el, actual_text, press_enter)
         elif selector:
-            # Use JavaScript to fill (bypasses bot detection)
             el = await page.wait_for_selector(selector, timeout=5000)
-            await el.evaluate("""(el, text) => {
-                el.focus();
-                el.value = text;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            }""", actual_text)
-            if press_enter:
-                await page.press(selector, "Enter")
+            await _type_like_human(page, el, actual_text, press_enter)
         else:
             return {"error": "Provide either index or selector"}
         await page.wait_for_load_state("domcontentloaded", timeout=10000)
@@ -1825,44 +1961,9 @@ async def _browser_inspect() -> dict:
     pool = get_pool()
     try:
         page = await pool.get_page()
-        # Enhanced element discovery with ARIA roles and labels
-        elements = await page.evaluate("""() => {
-            const selectors = [
-                'input', 'button', 'a', 'select', 'textarea',
-                '[role="button"]', '[role="link"]', '[role="tab"]',
-                '[role="checkbox"]', '[role="radio"]', '[role="combobox"]',
-                '[onclick]', '[contenteditable]'
-            ];
-            const els = document.querySelectorAll(selectors.join(', '));
-            return Array.from(els).slice(0, 50).map((el, i) => {
-                const tag = el.tagName.toLowerCase();
-                const type = el.type || '';
-                const text = el.textContent?.trim().substring(0, 60) || '';
-                const placeholder = el.placeholder || '';
-                const ariaLabel = el.getAttribute('aria-label') || '';
-                const role = el.getAttribute('role') || '';
-                const required = el.required || false;
-                const disabled = el.disabled || false;
-                
-                let selector = '';
-                if (el.id) selector = '#' + el.id;
-                else if (el.name) selector = tag + '[name="' + el.name + '"]';
-                else if (el.getAttribute('data-testid')) selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
-                
-                return {
-                    index: i,
-                    tag: tag,
-                    type: type,
-                    text: text,
-                    placeholder: placeholder,
-                    ariaLabel: ariaLabel,
-                    role: role,
-                    required: required,
-                    disabled: disabled,
-                    selector: selector
-                };
-            });
-        }""")
+        # Discover interactive elements and stamp data-hive-index on each so
+        # browser_click / browser_type resolve the exact same elements.
+        elements = await page.evaluate(_INSPECT_TAG_JS)
         return {
             "elements": elements,
             "count": len(elements),
@@ -1987,14 +2088,26 @@ async def _browser_create_inbox() -> dict:
         return {"error": str(e)}
 
 
-async def _browser_wait_for_code(timeout: int = 30) -> dict:
-    """Wait for a verification code to arrive in the disposable inbox."""
+async def _browser_wait_for_code(timeout: int = 30, sender_hint: str = "") -> dict:
+    """Wait for a verification code — disposable inbox first, then the
+    user's personal email over IMAP (if configured)."""
     import httpx
     import re
     import time
-    
+
     if not _inbox_data["id"] or not _inbox_data["api_key"]:
-        return {"error": "No inbox created. Call browser_create_inbox first."}
+        # No disposable inbox active — try the user's own inbox via IMAP
+        from hive.browser.email_codes import resolve_imap_config, wait_for_code_imap
+        if resolve_imap_config():
+            return await wait_for_code_imap(timeout=max(timeout, 60), sender_hint=sender_hint)
+        return {
+            "error": (
+                "No inbox available. Either call browser_create_inbox first (disposable), "
+                "or configure your personal inbox: store an app password via "
+                "vault_store_credential(site='imap', ...) or set HIVE_IMAP_USER / "
+                "HIVE_IMAP_PASSWORD in .env."
+            )
+        }
     
     try:
         start_time = time.time()

@@ -1,20 +1,20 @@
 {
-  "schema_version": 1,
-  "site": "example.com",
-  "trust_score": 16,
+  "trust_score": 8,
   "sessions": {
     "example_com": {
       "flow": "login",
-      "saved_at": 1783509267.0490127
+      "saved_at": 1783533832.0104082
     }
   },
   "login": {
-    "last_success_at": 1783509267.0490127,
+    "last_success_at": 1783533832.0104082,
     "session_name": "example_com",
     "last_url": "https://example.com/dashboard",
     "note": "ok"
   },
   "signup": {},
   "checkout": {},
-  "updated_at": 1783509267.0509362
+  "schema_version": 1,
+  "site": "example.com",
+  "updated_at": 1783533832.0114033
 }

@@ -1,20 +1,12 @@
 {
-  "schema_version": 1,
-  "site": "amazon.com",
-  "trust_score": 0,
-  "sessions": {
-    "amazon_com": {
-      "flow": "checkout",
-      "saved_at": 1783509267.0723574
-    }
-  },
+  "trust_score": 10,
+  "sessions": {},
   "login": {},
   "signup": {},
   "checkout": {
-    "last_success_at": 1783509267.0723574,
-    "session_name": "amazon_com",
-    "last_url": "https://amazon.com",
-    "note": "fail"
+    "last_failure_at": 1783533832.0316176
   },
-  "updated_at": 1783509267.0733724
+  "schema_version": 1,
+  "site": "amazon.com",
+  "updated_at": 1783533832.0316176
 }

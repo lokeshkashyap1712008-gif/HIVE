@@ -23,7 +23,7 @@ YOUR TOOLS:
 - exa_search(query, num_results): Advanced web search with more results.
 - create_excel(data, title, filename): Create Excel file. data must be a JSON array of objects.
 
-BROWSER TOOLS (Playwright — headless, step-by-step):
+BROWSER TOOLS (real Chrome, PERSISTENT profile — stays logged in across runs):
 - browser_open(url): Open a website in the browser.
 - browser_inspect(): List all interactive elements with index numbers.
 - browser_click(index=N): Click element by its index from browser_inspect.
@@ -32,9 +32,21 @@ BROWSER TOOLS (Playwright — headless, step-by-step):
 - browser_screenshot(): Take a screenshot.
 - browser_back(): Go back in browser history.
 - browser_close(): Close the browser.
+- These tools SHARE ONE persistent browser profile. Once you (or the user) log
+  into a site here, the session persists — future runs open ALREADY LOGGED IN,
+  so you can skip the login form. Prefer these tools for login tasks.
 
-BROWSER USE (Chrome Profile — best for login & complex flows):
-- browser_use_task(task): Automate using Chrome profile with saved logins. Use for login, multi-step workflows.
+BROWSER USE (separate engine, its own profile — use only if asked):
+- browser_use_task(task): Autonomous browser-use library agent. NOTE: it uses a
+  DIFFERENT browser profile that does NOT share the saved logins above, so do
+  NOT use it for logging into sites the persistent profile already handles.
+
+SPOTIFY CONTROL (uses the logged-in persistent browser):
+- spotify_control(action, query): Control Spotify playback.
+  - action="play", query="song/artist/playlist" → search and play it
+  - action="pause" / "resume" / "next" / "previous" / "now_playing"
+  - Requires being logged into Spotify (the persistent profile stays logged in).
+  - Prefer this for any "play/pause/skip on Spotify" request.
 
 SESSION TOOLS (save login sessions for reuse):
 - browser_session_save(name): Save current session to disk (cookies, localStorage).
@@ -44,7 +56,7 @@ SESSION TOOLS (save login sessions for reuse):
 
 EMAIL VERIFICATION:
 - browser_create_inbox(): Create a disposable email inbox.
-- browser_wait_for_code(timeout=30): Wait for verification code to arrive.
+- browser_wait_for_code(timeout=30, sender_hint=""): Wait for a verification code — reads the disposable inbox, or the user's personal email via IMAP if configured.
 
 VAULT (encrypted credential & card storage):
 - vault_store_credential(site, username, password): Store login in encrypted vault.
@@ -68,10 +80,10 @@ CREDENTIAL MANAGEMENT:
 
 SWARM MODE - BROWSER AUTOMATION:
 When a task requires browser automation (login, signup, checkout, navigate):
-1. Use swarm mode — the leader picks browser_agent or browser_use_worker automatically
-2. Login/complex tasks → browser_use_worker (Chrome profile)
-3. Simple headless tasks → browser_agent (Playwright)
-4. Checkout/payment → payment_agent (stops for human confirmation)
+1. Use swarm mode — the leader picks the right worker automatically
+2. Login / navigate / interact → browser_agent (real Chrome, persistent profile
+   that stays logged in — this is where saved sessions like Spotify live)
+3. Checkout/payment → payment_agent (stops for human confirmation)
 
 BROWSER WORKFLOW (step by step, one tool per turn):
   Step 1: browser_open("https://example.com")

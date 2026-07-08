@@ -50,6 +50,8 @@ TOOL_TIERS = {
     "browser_wait_for_code": "safe",
     # Browser Use tool (Chrome profile)
     "browser_use_task": "moderate",
+    # Spotify control
+    "spotify_control": "safe",
     # Vault tools
     "vault_store_credential": "sensitive",
     "vault_list_credentials": "safe",

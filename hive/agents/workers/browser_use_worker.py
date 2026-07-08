@@ -57,50 +57,64 @@ def _find_source_chrome_profile() -> Optional[str]:
 
 
 def _ensure_automation_profile() -> str:
-    """Clone Chrome profile to dedicated automation dir if needed.
+    """Create a fresh automation Chrome profile.
 
-    This allows automation while user's normal Chrome can stay open.
-  Profile is refreshed if older than 7 days.
+    Uses a clean profile to avoid Chrome's identity verification popup
+    that triggers when cloning the real Chrome profile (DPAPI-bound keys).
+    Credentials are loaded from the vault instead of saved logins.
     """
-    import time
     automation_dir = Path(CHROME_AUTOMATION_PROFILE)
     marker = automation_dir / ".profile_ready"
-    max_age = 7 * 24 * 3600
 
-    if marker.exists():
-        age = time.time() - marker.stat().st_mtime
-        if age < max_age and (automation_dir / "Default").exists():
-            return str(automation_dir)
+    if marker.exists() and (automation_dir / "Default").exists():
+        return str(automation_dir)
 
-    source = _find_source_chrome_profile()
     automation_dir.mkdir(parents=True, exist_ok=True)
 
-    if source and os.path.exists(source):
-        # Copy only essential profile data (not full cache)
-        for item in ["Default", "Local State"]:
-            src = os.path.join(source, item)
-            dst = automation_dir / item
-            if os.path.exists(src):
-                try:
-                    if os.path.isdir(src):
-                        if dst.exists():
-                            shutil.rmtree(dst, ignore_errors=True)
-                        shutil.copytree(
-                            src, dst,
-                            ignore=shutil.ignore_patterns(
-                                "Cache", "Code Cache", "GPUCache", "Service Worker",
-                                "ShaderCache", "*.tmp", "Crashpad",
-                            ),
-                            dirs_exist_ok=True,
-                        )
-                    else:
-                        shutil.copy2(src, dst)
-                except Exception as e:
-                    logger.warning("Could not copy %s: %s", item, e)
-        logger.info("Cloned Chrome profile to automation dir: %s", automation_dir)
-    else:
-        logger.info("No source Chrome profile found; using fresh automation profile")
+    # Write a fresh Local State with no Google account sync
+    local_state = {
+        "browser": {
+            "enabled_labs_experiments": [],
+            "check_default_browser": False,
+        },
+        "profile": {
+            "name": "HIVE Automation",
+            "default_content_setting_values": {
+                "notifications": 2,
+            },
+        },
+        "signin": {
+            "allowed": False,
+        },
+    }
+    import json
+    (automation_dir / "Local State").write_text(json.dumps(local_state, indent=2))
 
+    # Create Default profile directory with Preferences that disable sync
+    default_dir = automation_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    preferences = {
+        "browser": {
+            "show_home_button": False,
+            "check_default_browser": False,
+        },
+        "signin": {
+            "allowed": False,
+            "previous_modes": [],
+        },
+        "sync": {
+            "disabled": True,
+        },
+        "google": {
+            "services": {
+                "account_id": "",
+                "gaia_id": "",
+            },
+        },
+    }
+    (default_dir / "Preferences").write_text(json.dumps(preferences, indent=2))
+
+    logger.info("Created fresh automation profile: %s", automation_dir)
     marker.touch()
     return str(automation_dir)
 
@@ -109,7 +123,7 @@ BROWSER_USE_WORKER_INSTRUCTIONS = """
 BROWSER USE WORKER - Full Browser Automation
 
 You control a real web browser using Browser Use.
-The browser has access to saved logins from a cloned Chrome profile.
+Credentials are loaded from the HIVE vault, not Chrome saved logins.
 You can navigate, click, type, read, and interact with any website.
 
 CAPABILITIES:
@@ -119,10 +133,10 @@ CAPABILITIES:
 - Read page content
 - Take screenshots
 - Save and load browser sessions
-- Use saved logins from Chrome profile
+- Use credentials from the vault
 
 WHAT YOU CAN DO:
-- Login to websites using saved credentials
+- Login to websites using vault credentials
 - Fill out forms
 - Click buttons
 - Navigate between pages
@@ -169,7 +183,22 @@ async def _run_browser_use_task(
         "disable_security": False,
         "args": [
             "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-sync-preferences",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-identity-ecma",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-default-apps",
+            "--disable-features=TranslateUI",
+            "--disable-ipc-flooding-protection",
+            "--window-size=1280,900",
         ],
+        "profile_directory": "Default",
+        "window_size": {"width": 1280, "height": 900},
     }
 
     if profile_dir and os.path.exists(profile_dir):
@@ -182,7 +211,7 @@ async def _run_browser_use_task(
             task=task,
             llm=llm,
             browser=browser,
-            max_actions_per_step=3,
+            max_actions_per_step=5,
         )
 
         history = await agent.run(max_steps=max_steps)
@@ -230,12 +259,101 @@ def run_browser_task(
         return f"ERROR: {str(e)}"
 
 
+def _inject_vault_credentials(task: str) -> str:
+    """Check vault for stored credentials and inject them into the task description."""
+    import re
+    from hive.browser.vault import get_credential
+
+    task_lower = task.lower()
+
+    # Only inject if task mentions login-related actions
+    login_keywords = ["log in", "login", "sign in", "signin", "authenticate"]
+    if not any(kw in task_lower for kw in login_keywords):
+        return task
+
+    # Extract site name from task
+    # Try URL first
+    url_match = re.search(r'https?://([^\s/]+)', task)
+    if url_match:
+        site = url_match.group(1).lower().replace("www.", "")
+    else:
+        # Try common brand names
+        brand_map = {
+            "spotify": "spotify.com",
+            "github": "github.com",
+            "google": "google.com",
+            "amazon": "amazon.com",
+            "twitter": "twitter.com",
+            "x": "twitter.com",
+            "facebook": "facebook.com",
+            "instagram": "instagram.com",
+            "linkedin": "linkedin.com",
+            "netflix": "netflix.com",
+            "youtube": "youtube.com",
+        }
+        site = ""
+        for brand, domain in brand_map.items():
+            if brand in task_lower:
+                site = domain
+                break
+        if not site:
+            # Try to find a site name mentioned before "credentials" or "login"
+            site_match = re.search(r'(?:for|on|at|to)\s+(\w+)', task, re.IGNORECASE)
+            if site_match:
+                candidate = site_match.group(1).lower()
+                if len(candidate) > 2 and candidate not in ("my", "the", "a", "an", "this", "that", "and", "or"):
+                    site = candidate + ".com"
+
+    if not site:
+        return task
+
+    # Look up credentials in vault
+    cred = get_credential(site)
+    if not cred:
+        # Try without TLD
+        site_bare = site.split(".")[0]
+        cred = get_credential(site_bare)
+
+    if not cred:
+        logger.info("[BrowserUseWorker] No vault credentials found for %s", site)
+        return task
+
+    # Inject credentials into task description
+    email = cred.get("username", "")
+    password = cred.get("password", "")
+
+    if email and password:
+        credential_instruction = f"""CRITICAL LOGIN INSTRUCTIONS:
+You have stored credentials for this site. Use them:
+
+Step 1: Find the email/username input field and type: {email}
+Step 2: Find and click the "Next" or "Continue" or "Log In" button (look for buttons with text like "Next", "Continue", "Log in", "Sign in", or any submit button)
+Step 3: Wait for the password field to appear
+Step 4: Find the password input field and type: {password}
+Step 5: Find and click the "Log In" or "Sign In" or "Continue" button to submit
+
+IMPORTANT RULES:
+- After typing in each field, you MUST click the submit/next button to proceed
+- If you see a "Next" button, click it — this advances to the password step
+- Do NOT stop after filling the email field — you MUST click Next/Continue
+- Wait 1-2 seconds after clicking for the page to load
+- If a CAPTCHA or verification appears, report it and stop
+"""
+        # Insert before the original task
+        return credential_instruction + "\nOriginal task: " + task
+
+    return task
+
+
 async def run(task: str, context: Optional[dict] = None) -> dict:
     """HIVE worker interface - run browser task using Browser Use."""
     try:
         actual_task = task
         if context and "task" in context:
             actual_task = context["task"]
+
+        # Inject vault credentials if task mentions login and vault has stored creds
+        actual_task = _inject_vault_credentials(actual_task)
 
         result = await _run_browser_use_task(
             actual_task,
