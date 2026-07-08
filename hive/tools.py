@@ -359,6 +359,75 @@ TOOLS = {
             "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
         },
     },
+    # ─── Browser Use Tool (Chrome Profile) ──────────────────────
+    "browser_use_task": {
+        "description": "Automate browser using Chrome profile with saved logins. Best for login, multi-step workflows, and sites with saved credentials.",
+        "parameters": {
+            "task": {"type": "string", "description": "What to do in the browser"},
+            "headless": {"type": "boolean", "description": "Run invisibly (default false)"},
+            "max_steps": {"type": "integer", "description": "Max steps (default 30)"},
+        },
+    },
+    # ─── Vault Tools ────────────────────────────────────────────
+    "vault_store_credential": {
+        "description": "Store site login credentials in encrypted vault (never plaintext .env)",
+        "parameters": {
+            "site": {"type": "string", "description": "Site domain e.g. github.com"},
+            "username": {"type": "string", "description": "Email or username"},
+            "password": {"type": "string", "description": "Password"},
+        },
+    },
+    "vault_list_credentials": {
+        "description": "List stored credentials (no passwords shown)",
+        "parameters": {},
+    },
+    "vault_store_card": {
+        "description": "Store payment card in encrypted vault",
+        "parameters": {
+            "label": {"type": "string", "description": "Card label e.g. 'personal'"},
+            "number": {"type": "string", "description": "Card number"},
+            "expiry": {"type": "string", "description": "Expiry MM/YY"},
+            "cvv": {"type": "string", "description": "CVV"},
+            "name": {"type": "string", "description": "Name on card"},
+            "billing_zip": {"type": "string", "description": "Billing ZIP (optional)"},
+        },
+    },
+    "vault_list_cards": {
+        "description": "List stored payment cards (last 4 digits only)",
+        "parameters": {},
+    },
+    # ─── Signup & Checkout ──────────────────────────────────────
+    "browser_signup": {
+        "description": "Create a new account on a website: fill signup form, handle email verification, save credentials to vault",
+        "parameters": {
+            "task": {"type": "string", "description": "Signup task description"},
+            "url": {"type": "string", "description": "Signup page URL"},
+            "email": {"type": "string", "description": "Email to use (optional — creates disposable if omitted)"},
+            "password": {"type": "string", "description": "Password (optional — auto-generated if omitted)"},
+        },
+    },
+    "browser_checkout": {
+        "description": "Run guarded browser checkout: fill cart/checkout, enter card from vault, STOP before final purchase for human confirmation",
+        "parameters": {
+            "task": {"type": "string", "description": "Checkout task description"},
+            "url": {"type": "string", "description": "Checkout page URL (optional)"},
+            "amount": {"type": "number", "description": "Expected order amount for spending cap check"},
+            "card_id": {"type": "string", "description": "Vault card ID (optional — uses default card)"},
+            "confirm": {"type": "boolean", "description": "Set true to place order after human review"},
+        },
+    },
+    "browser_google_login": {
+        "description": "Open visible browser for manual Google sign-in. You solve CAPTCHA/2FA; HIVE saves session as google_com.",
+        "parameters": {
+            "email": {"type": "string", "description": "Gmail address hint (optional)"},
+        },
+    },
+    "browser_oauth": {
+        "description": "OAuth login for github or google. Opens browser for authorization.",
+        "parameters": {
+            "platform": {"type": "string", "description": "github or google"},
+        },
+    },
 }
 
 
@@ -532,6 +601,7 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                     text=kwargs.get("text", ""),
                     press_enter=kwargs.get("press_enter", False),
                     index=kwargs.get("index", -1),
+                    sensitive_data=kwargs.get("sensitive_data"),
                 )
             elif tool_name == "browser_wait":
                 result = await _browser_wait(
@@ -562,6 +632,45 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                 result = await _browser_create_inbox()
             elif tool_name == "browser_wait_for_code":
                 result = await _browser_wait_for_code(kwargs.get("timeout", 30))
+            # ─── Browser Use Tool (Chrome Profile) ──────────────
+            elif tool_name == "browser_use_task":
+                result = await _browser_use_task(
+                    kwargs["task"],
+                    headless=kwargs.get("headless", False),
+                    max_steps=kwargs.get("max_steps", 30),
+                )
+            elif tool_name == "vault_store_credential":
+                result = await _vault_store_credential(
+                    kwargs["site"], kwargs["username"], kwargs["password"],
+                )
+            elif tool_name == "vault_list_credentials":
+                result = await _vault_list_credentials()
+            elif tool_name == "vault_store_card":
+                result = await _vault_store_card(
+                    kwargs["label"], kwargs["number"], kwargs["expiry"],
+                    kwargs["cvv"], kwargs.get("name", ""), kwargs.get("billing_zip", ""),
+                )
+            elif tool_name == "vault_list_cards":
+                result = await _vault_list_cards()
+            elif tool_name == "browser_signup":
+                result = await _browser_signup(
+                    kwargs["task"],
+                    url=kwargs.get("url"),
+                    email=kwargs.get("email"),
+                    password=kwargs.get("password"),
+                )
+            elif tool_name == "browser_checkout":
+                result = await _browser_checkout(
+                    kwargs["task"],
+                    url=kwargs.get("url"),
+                    amount=kwargs.get("amount"),
+                    card_id=kwargs.get("card_id"),
+                    confirm=kwargs.get("confirm", False),
+                )
+            elif tool_name == "browser_google_login":
+                result = await _browser_google_login(kwargs.get("email"))
+            elif tool_name == "browser_oauth":
+                result = await _browser_oauth(kwargs.get("platform", "github"))
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}
 
@@ -1680,13 +1789,14 @@ async def _browser_wait(selector: str, timeout: int = 10) -> dict:
 
 
 async def _browser_screenshot(filename: str = "screenshot.png") -> dict:
-    """Take a screenshot and save to Desktop."""
+    """Take a screenshot and save to HIVE screenshots directory."""
     from hive.browser.pool import get_pool
+    from hive.config import BROWSER_SCREENSHOT_DIR, ensure_dirs
+    ensure_dirs()
     pool = get_pool()
     try:
         page = await pool.get_page()
-        desktop = Path.home() / "OneDrive" / "Desktop"
-        filepath = desktop / filename
+        filepath = BROWSER_SCREENSHOT_DIR / filename
         await page.screenshot(path=str(filepath), full_page=False)
         return {"status": "saved", "path": str(filepath)}
     except Exception as e:
@@ -1724,7 +1834,7 @@ async def _browser_inspect() -> dict:
                 '[onclick]', '[contenteditable]'
             ];
             const els = document.querySelectorAll(selectors.join(', '));
-            return Array.from(els).slice(0, 30).map((el, i) => {
+            return Array.from(els).slice(0, 50).map((el, i) => {
                 const tag = el.tagName.toLowerCase();
                 const type = el.type || '';
                 const text = el.textContent?.trim().substring(0, 60) || '';
@@ -1908,3 +2018,65 @@ async def _browser_wait_for_code(timeout: int = 30) -> dict:
         return {"error": f"No code received within {timeout} seconds"}
     except Exception as e:
         return {"error": str(e)}
+
+
+async def _browser_use_task(task: str, headless: bool = False, max_steps: int = 30) -> dict:
+    """Automate browser tasks using Browser Use with cloned Chrome profile."""
+    try:
+        from hive.agents.workers.browser_use_worker import _run_browser_use_task
+        result = await _run_browser_use_task(task, headless=headless, max_steps=max_steps)
+        return {"status": "completed", "output": result}
+    except ImportError:
+        return {"error": "browser-use library not installed. Run: pip install browser-use"}
+    except Exception as e:
+        return {"error": f"Browser task failed: {str(e)}"}
+
+
+# ─── Vault Tool Implementations ───────────────────────────────────
+
+async def _vault_store_credential(site: str, username: str, password: str) -> dict:
+    from hive.browser.vault import store_credential
+    cred_id = store_credential(site, username, password)
+    return {"status": "stored", "id": cred_id, "site": site, "username": username}
+
+
+async def _vault_list_credentials() -> dict:
+    from hive.browser.vault import list_credentials
+    creds = list_credentials()
+    return {"credentials": creds, "count": len(creds)}
+
+
+async def _vault_store_card(label: str, number: str, expiry: str, cvv: str,
+                             name: str = "", billing_zip: str = "") -> dict:
+    from hive.browser.vault import store_card
+    card_id = store_card(label, number, expiry, cvv, name, billing_zip)
+    return {"status": "stored", "id": card_id, "label": label, "last4": number[-4:]}
+
+
+async def _vault_list_cards() -> dict:
+    from hive.browser.vault import list_cards
+    cards = list_cards()
+    return {"cards": cards, "count": len(cards)}
+
+
+async def _browser_signup(task: str, url: str = None, email: str = None, password: str = None) -> dict:
+    from hive.browser.signup import run_signup
+    return await run_signup(task, url=url, email=email, password=password)
+
+
+async def _browser_checkout(task: str, url: str = None, amount: float = None,
+                             card_id: str = None, confirm: bool = False) -> dict:
+    from hive.browser.checkout import run_checkout, confirm_checkout
+    if confirm:
+        return await confirm_checkout(task, url=url, amount=amount, card_id=card_id)
+    return await run_checkout(task, url=url, amount=amount, card_id=card_id)
+
+
+async def _browser_google_login(email: str = None) -> dict:
+    from hive.browser.google_login import run_google_login
+    return await run_google_login(email=email)
+
+
+async def _browser_oauth(platform: str = "github") -> dict:
+    from hive.browser.oauth import start_oauth
+    return await start_oauth(platform)

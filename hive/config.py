@@ -14,8 +14,26 @@ SKILLS_DIR = HIVE_HOME / "skills"
 
 # LLM
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
-QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.7-plus")
+QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen-max")
 QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+# Browser automation
+BROWSER_SCREENSHOT_DIR = Path(
+    os.environ.get("HIVE_SCREENSHOT_DIR", str(HIVE_HOME / "screenshots"))
+)
+CHROME_AUTOMATION_PROFILE = Path(
+    os.environ.get("HIVE_CHROME_PROFILE", str(HIVE_HOME / "chrome-automation"))
+)
+
+# Checkout / payments guardrails
+HIVE_CHECKOUT_AUTONOMOUS = os.environ.get("HIVE_CHECKOUT_AUTONOMOUS", "false").lower() in ("1", "true", "yes")
+HIVE_MAX_ORDER_AMOUNT = float(os.environ.get("HIVE_MAX_ORDER_AMOUNT", "500"))
+HIVE_MAX_DAILY_SPEND = float(os.environ.get("HIVE_MAX_DAILY_SPEND", "1000"))
+HIVE_CHECKOUT_ALLOWED_MERCHANTS = [
+    m.strip().lower()
+    for m in os.environ.get("HIVE_CHECKOUT_ALLOWED_MERCHANTS", "").split(",")
+    if m.strip()
+]
 
 # Exa — Web Search
 EXA_API_KEY = os.environ.get("EXA_API_KEY", "")
@@ -79,6 +97,8 @@ def ensure_dirs():
     HIVE_HOME.mkdir(parents=True, exist_ok=True)
     AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    BROWSER_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    CHROME_AUTOMATION_PROFILE.mkdir(parents=True, exist_ok=True)
 
 
 def get_sanitized_context():

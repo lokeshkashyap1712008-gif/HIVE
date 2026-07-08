@@ -7,6 +7,7 @@ import { StatusLine } from './components/StatusLine.js';
 import { BeeSwarm } from './components/BeeSwarm.js';
 import { MessageLog } from './components/MessageLog.js';
 import { PermissionDialog } from './components/PermissionDialog.js';
+import { InteractivePromptDialog } from './components/InteractivePromptDialog.js';
 import {
   HiveAnimation,
   BeeEntity,
@@ -83,6 +84,7 @@ export function App() {
 
   const [toolCalls, setToolCalls] = useState<Array<{ tool: string; args: Record<string, unknown> }>>([]);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
+  const [pendingInteractivePrompt, setPendingInteractivePrompt] = useState<null | any>(null);
   const [messages, setMessages] = useState<Array<{ id: string; role: string; content: string }>>([]);
   const [processing, setProcessing] = useState(false);
   const [streamText, setStreamText] = useState('');
@@ -166,6 +168,9 @@ export function App() {
           break;
         case 'permission_request':
           setPendingPermission(msg as unknown as PermissionRequest);
+          break;
+        case 'interactive_prompt':
+          setPendingInteractivePrompt(msg);
           break;
         case 'status':
           setDashboard(prev => ({ ...prev, status: msg.status as string }));
@@ -473,6 +478,16 @@ export function App() {
               tier={pendingPermission.tier}
               requestId={pendingPermission.request_id}
               onDecision={handlePermission}
+            />
+          )}
+
+          {pendingInteractivePrompt && (
+            <InteractivePromptDialog
+              prompt={pendingInteractivePrompt}
+              onDecision={(requestId, result) => {
+                bridge.send({ type: 'interactive_response', request_id: requestId, result });
+                setPendingInteractivePrompt(null);
+              }}
             />
           )}
         </Box>

@@ -66,8 +66,80 @@ def _is_browser_task(description: str) -> bool:
         "browser", "website", "web page",
         "type in", "enter text", "input",
         "2fa", "otp", "verification code",
+        "pay", "payment", "order",
     ]
     return any(kw in desc_lower for kw in browser_keywords)
+
+
+def _is_checkout_task(description: str) -> bool:
+    desc_lower = description.lower()
+    return any(kw in desc_lower for kw in [
+        "checkout", "purchase", "buy", "pay", "payment", "place order",
+        "add to cart", "complete order",
+    ])
+
+
+def _is_signup_task(description: str) -> bool:
+    desc_lower = description.lower()
+    return any(kw in desc_lower for kw in [
+        "sign up", "signup", "register", "create account", "create an account",
+    ])
+
+
+def _select_browser_worker(description: str) -> str:
+    """Pick the best browser engine for a task."""
+    desc_lower = description.lower()
+
+    # Checkout and payments go to payment_agent
+    if _is_checkout_task(description):
+        return "payment_agent"
+
+    # Signup goes to account flow via browser_agent (signup module called from tools)
+    if _is_signup_task(description):
+        return "browser_agent"
+
+    # Complex / saved-login tasks → Browser Use
+    browser_use_signals = [
+        "saved login", "chrome profile", "already logged in",
+        "multi-step", "complex", "saved credentials",
+    ]
+    login_signals = ["login", "sign in", "log in", "authenticate", "credentials", "password"]
+    if any(s in desc_lower for s in browser_use_signals):
+        return "browser_use_worker"
+    if any(s in desc_lower for s in login_signals):
+        # If we've built a strong playbook for this site, we may be able to
+        # reuse the simpler Playwright browser_agent + saved session.
+        try:
+            import re
+            from hive.playbooks import load_playbook, site_key
+
+            m = re.search(r"(https?://[^\s]+)", description)
+            if m:
+                host = m.group(1).split("//", 1)[1].split("/", 1)[0]
+            else:
+                # Fallbacks for common brands mentioned without URLs.
+                brand_to_domain = {
+                    "github": "github.com",
+                    "google": "google.com",
+                    "gmail": "google.com",
+                    "amazon": "amazon.com",
+                    "shopify": "shopify.com",
+                }
+                host = next((d for b, d in brand_to_domain.items() if b in desc_lower), "")
+
+            if host:
+                sk = site_key(host)
+                pb = load_playbook(sk)
+                trust = int(pb.get("trust_score", 0))
+                has_session = bool((pb.get("login") or {}).get("session_name"))
+                if trust >= 70 and has_session:
+                    return "browser_agent"
+        except Exception:
+            pass
+        return "browser_use_worker"
+
+    # Simple headless tasks → Playwright browser_agent
+    return "browser_agent"
 
 
 def _normalize_worker_type(worker_type: str) -> str:
@@ -93,11 +165,12 @@ class HiveLeader:
         self.bus.register_agent(agent_id, "leader")
 
     async def decompose_task(self, description: str) -> List[dict]:
-        # Detect if this is a browser task
+        # Route browser tasks to the best worker
         if _is_browser_task(description):
+            worker = _select_browser_worker(description)
             return [{
                 "description": description,
-                "worker_type": "browser_agent",
+                "worker_type": worker,
                 "priority": "high",
                 "group": "default",
             }]
@@ -180,16 +253,21 @@ For tasks that can run in parallel, use the same 'group' field value."""},
         safety = SafetyAgent(task_context=description)
         safety_result = await safety.check(description)
         if not safety_result.get("approved", True):
-            logger.warning(f"[Swarm] SafetyAgent blocked task: {safety_result.get('reason')}")
-            dash.agent_fail(agent_label, "blocked by safety")
-            return {
-                "worker": worker_id,
-                "task": description,
-                "group": group,
-                "status": "blocked",
-                "error": f"Blocked by SafetyAgent: {safety_result.get('reason')}",
-                "requires_human": safety_result.get("requires_human", False),
-            }
+            # Allow high-stakes tasks that only need human confirmation
+            if safety_result.get("requires_human", False):
+                logger.info("[Swarm] Task requires human approval: %s", safety_result.get("reason"))
+                dash.events.append(Event(time.time(), "msg", "safety", "Awaiting human approval", "yellow"))
+            else:
+                logger.warning("[Swarm] SafetyAgent blocked task: %s", safety_result.get("reason"))
+                dash.agent_fail(agent_label, "blocked by safety")
+                return {
+                    "worker": worker_id,
+                    "task": description,
+                    "group": group,
+                    "status": "blocked",
+                    "error": f"Blocked by SafetyAgent: {safety_result.get('reason')}",
+                    "requires_human": safety_result.get("requires_human", False),
+                }
 
         task_cost = economy.task_cost(worker_id, "medium")
         if not economy.spend(worker_id, task_cost, f"worker task: {description[:50]}",
@@ -219,9 +297,12 @@ For tasks that can run in parallel, use the same 'group' field value."""},
 
         try:
             mod = importlib.import_module(f"hive.agents.workers.{worker_id}")
-            # Pass context to browser workers for credentials
-            if worker_id in ("browser_agent", "browser_use_worker"):
-                result = await mod.run(description, context={"task": description})
+            # Pass context to browser/payment workers
+            if worker_id in ("browser_agent", "browser_use_worker", "payment_agent"):
+                ctx = {"task": description}
+                if safety_result.get("requires_human"):
+                    ctx["requires_human_approval"] = True
+                result = await mod.run(description, context=ctx)
             else:
                 result = await mod.run(description)
             state.task_completed(success=True)
@@ -329,11 +410,13 @@ async def run_swarm(task_description: str) -> dict:
     dash.set_task(task_description)
     dash.set_status("routing")
 
-    # Check if this is a high-stakes task that needs debate/judge
-    high_stakes_keywords = ["delete", "payment", "transfer", "sudo", "drop", "destroy", "irreversible"]
+    # High-stakes checkout/payment: require human approval, don't auto-reject
+    high_stakes_keywords = ["delete", "transfer", "sudo", "drop", "destroy", "irreversible"]
+    payment_keywords = ["payment", "checkout", "purchase", "buy", "pay"]
+    is_payment_task = any(kw in task_description.lower() for kw in payment_keywords)
     is_high_stakes = any(kw in task_description.lower() for kw in high_stakes_keywords)
 
-    if is_high_stakes:
+    if is_high_stakes and not is_payment_task:
         dash.set_status("debating")
         try:
             from hive.agents.debate_protocol import run_debate

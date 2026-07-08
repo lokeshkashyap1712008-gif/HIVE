@@ -34,10 +34,20 @@ dependencies = [
     "pyautogui>=0.9",
     "pywinauto>=0.6",
     "playwright>=1.40.0",
+    "playwright-stealth>=1.0.6",
     "pyperclip>=1.8",
+    "psutil>=5.9.0",
+    "pygetwindow>=0.0.9",
+    "pyotp>=2.9.0",
+    "cryptography>=42.0.0",
+    "keyring>=25.0.0",
 ]
 
 [project.optional-dependencies]
+browser = [
+    "browser-use>=0.1.40",
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -55,3 +65,7 @@ include = ["hive*"]
 
 [tool.setuptools.package-data]
 hive = ["*.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -904,3 +904,139 @@ pydantic>=2.9.0        # Settings validation
 | Permissions | Risk-based tiers | safe/moderate/sensitive/dangerous |
 | CLI output | Plain text with prefixes | ●, -, +, ? |
 | Dependencies | 5 total | aiosqlite, httpx, rich, dotenv, pydantic |
+
+---
+
+## 16. Browser Automation, Accounts & Payments (Phase 6 — DONE)
+
+### What was built
+
+| Component | File | Status |
+|---|---|---|
+| Playwright browser pool + stealth | `hive/browser/pool.py` | Done |
+| Autonomous Playwright agent | `hive/agents/workers/browser_agent.py` | Done |
+| Browser Use (Chrome profile clone) | `hive/agents/workers/browser_use_worker.py` | Done |
+| Encrypted credential/card vault | `hive/browser/vault.py` | Done |
+| Account signup flow | `hive/browser/signup.py` | Done |
+| Guarded checkout flow | `hive/browser/checkout.py` | Done |
+| Payment agent worker | `hive/agents/workers/payment_agent.py` | Done |
+| Smart engine routing | `hive/agents/leader.py` `_select_browser_worker()` | Done |
+| Vault/signup/checkout tools | `hive/tools.py` | Done |
+| Smoke tests | `test_browser_smoke.py` | Done |
+
+### Engine routing
+
+| Task type | Worker |
+|---|---|
+| Login, saved profile, complex flows | `browser_use_worker` |
+| Simple headless navigation | `browser_agent` |
+| Checkout / purchase | `payment_agent` |
+| Sign up / register | `browser_agent` + `browser/signup.py` |
+
+### Checkout guardrails (defaults)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `HIVE_CHECKOUT_AUTONOMOUS` | `false` | Pause before "Place Order" |
+| `HIVE_MAX_ORDER_AMOUNT` | `500` | Per-order cap |
+| `HIVE_MAX_DAILY_SPEND` | `1000` | Daily cap |
+| `HIVE_CHECKOUT_ALLOWED_MERCHANTS` | (empty) | Domain allowlist |
+
+---
+
+## 17. Browser Testing Guide
+
+Use this order when validating browser automation. Start easy, move to harder sites.
+
+### Tier 1 — No login (verify tools work)
+
+| Site | What to test | Command |
+|---|---|---|
+| https://example.com | open, inspect, screenshot | `python test_browser_smoke.py` |
+| https://the-internet.herokuapp.com | clicks, navigation | `/swarm open https://the-internet.herokuapp.com and click the first link` |
+| https://httpbin.org/forms/post | type, submit | `/swarm open https://httpbin.org/forms/post and fill the form` |
+| https://www.wikipedia.org | search, navigate | `/swarm search wikipedia for artificial intelligence` |
+
+### Tier 2 — Login practice
+
+| Site | Credentials | Notes |
+|---|---|---|
+| https://the-internet.herokuapp.com/login | `tomcat` / `SuperSecretPassword!` | Best first login test |
+| https://practicetestautomation.com/practice-test-login/ | `student` / `Password123` | Built for automation |
+| https://github.com/login | your account | HIVE has GitHub defaults |
+| https://demo.testfire.net | `admin` / `admin` | Fake bank, good navigation |
+
+After successful login: `browser_session_save(name="site_name")` then `browser_session_load(name="site_name")` on next run.
+
+### Tier 3 — Signup + email verification
+
+Requires `MINUTEMAIL_API_KEY` in `.env` for disposable email.
+
+```
+/swarm sign up for an account at https://example-registration-site.com
+```
+
+Avoid for first tests: Google, Facebook, Amazon signup (heavy CAPTCHA).
+
+### Tier 4 — Checkout (fake stores only — no real money)
+
+| Site | Purpose |
+|---|---|
+| https://www.saucedemo.com | Add to cart + checkout (fake store) |
+| https://demo.vercel.store | Demo e-commerce |
+
+Test card (Stripe/sandbox): `4242424242424242`, expiry `12/28`, CVV `123`
+
+```
+vault_store_card(label="test", number="4242424242424242", expiry="12/28", cvv="123", name="Test User")
+/swarm add backpack to cart and checkout at saucedemo.com for $29.99
+```
+
+HIVE stops before final purchase unless `confirm=true` on `browser_checkout`.
+
+### Tier 5 — Hard (expect CAPTCHA / blocks)
+
+| Site | Expectation |
+|---|---|
+| Google | CAPTCHA, 2FA — use only after Tier 1–2 work; best with saved Chrome profile |
+| Amazon | Strong bot protection |
+| Facebook / Instagram | Very hard |
+| Banking sites | Do not automate |
+
+### Recommended test sequence
+
+```bash
+python test_browser_smoke.py
+/swarm open https://the-internet.herokuapp.com/login and login with username tomcat password SuperSecretPassword!
+browser_session_save(name="test_site")
+/swarm login to github.com
+/swarm add backpack to cart on saucedemo.com
+```
+
+### Setup
+
+```bash
+pip install -e ".[browser]"
+playwright install chromium
+pip install browser-use          # optional, for Chrome-profile login
+cp .env.example .env             # set DASHSCOPE_API_KEY
+python -m hive
+```
+
+---
+
+## 18. Known Gaps (Post Phase 6 + Human-in-the-Loop)
+
+| Gap | Status |
+|---|---|
+| CLI confirm purchase prompt | **Done** — `Place order for $X? [y/N]` |
+| CLI 2FA code prompt | **Done** — inline when agent hits 2FA |
+| CLI CAPTCHA handoff | **Done** — press Enter after solving |
+| Google login helper | **Done** — `/google-login` + `browser_google_login` |
+| OAuth GitHub/Google | **Done** — `/oauth` + `browser_oauth` |
+| pytest CI | **Done** — `tests/` + `.github/workflows/ci.yml` |
+| Site playbooks (replay workflows) | Not started — see VISION.md |
+| Trust ladder per domain | Not started — see VISION.md |
+| Ink frontend confirm/2FA UI | Not started — CLI only |
+| CAPTCHA auto-solver | Not started — human handoff only |
+| Google/Amazon fully autonomous login | Expected limitation — use `/google-login` |

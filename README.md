@@ -136,22 +136,78 @@ For every significant action, HIVE compares: how would a single agent handle thi
 ## Running HIVE
 
 ```bash
-cd C:/Users/lokes/hive
-python main.py
+cd hive
+pip install -e ".[browser]"   # or: pip install -r requirements.txt
+playwright install chromium    # required for Playwright browser tools
+# Optional: pip install browser-use  (Chrome-profile automation)
+
+cp .env.example .env
+# Edit .env — set DASHSCOPE_API_KEY at minimum
+
+python -m hive                 # interactive CLI
+python -m hive.cli --server    # JSON-lines server for Ink frontend
 ```
 
-Then open:
-- **Dashboard**: http://localhost:8000 (live visualization)
-- **API Docs**: http://localhost:8000/docs
-
 ```bash
-# Submit a task
-curl -X POST http://localhost:8000/api/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"task": "Build a SaaS landing page", "mode": "swarm"}'
+# Run browser smoke tests
+python test_browser_smoke.py
 ```
 
 ---
+
+## Browser Automation
+
+HIVE has two browser engines that the swarm leader picks automatically:
+
+| Engine | Worker | Best for |
+|--------|--------|----------|
+| **Playwright** (headless) | `browser_agent` | Simple navigation, form fill, inspect/click |
+| **Browser Use** (visible Chrome) | `browser_use_worker` | Login, saved credentials, multi-step flows |
+| **Checkout** | `payment_agent` | Guarded purchase with human confirmation |
+
+### Quick examples (CLI)
+
+```
+# Login (swarm routes to browser_use_worker)
+/swarm login to github.com with email user@example.com password secret
+
+# Sign up
+/swarm sign up for an account at https://example.com/register
+
+# Store credentials in encrypted vault
+vault_store_credential(site="github.com", username="user@example.com", password="secret")
+
+# Checkout (stops before final purchase)
+/swarm checkout and buy item at https://shop.example.com for $29.99
+```
+
+### Encrypted Vault
+
+Credentials and payment cards are stored in `~/.hive/vault/secrets.enc` (Fernet encryption).
+- Key stored in OS keyring, or set `HIVE_VAULT_MASTER_PASSWORD` in `.env`
+- Card numbers never sent to the LLM — injected via `sensitive_data` placeholders
+
+### Checkout Guardrails
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `HIVE_CHECKOUT_AUTONOMOUS` | `false` | Pause before "Place Order" |
+| `HIVE_MAX_ORDER_AMOUNT` | `500` | Per-order spending cap |
+| `HIVE_MAX_DAILY_SPEND` | `1000` | Daily spending cap |
+| `HIVE_CHECKOUT_ALLOWED_MERCHANTS` | (empty) | Domain allowlist |
+
+### CLI commands for browser
+
+```
+/google-login              # Manual Google sign-in (saves session)
+/google-login you@gmail.com
+/oauth github              # OAuth flow (set CLIENT_ID/SECRET in .env)
+/oauth google
+```
+
+See [VISION.md](VISION.md) for product direction and [PLAN.md](PLAN.md) Section 17 for the full testing guide.
+
+Run automated tests: `python -m pytest tests/ -v`
 
 ## The Hackathon Demo Story
 

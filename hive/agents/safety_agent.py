@@ -13,10 +13,9 @@ from hive.config import DENIED_PATTERNS
 
 logger = logging.getLogger(__name__)
 
-# Actions that require explicit safety check
-# Only block when action is ACTUALLY dangerous, not just mentioning keywords
+# Actions that require explicit human confirmation (not hard block for checkout)
 HIGH_STAKES_KEYWORDS = [
-    "transfer money", "wire transfer", "send payment",
+    "transfer money", "wire transfer",
     "delete account", "remove account permanently",
     "cancel subscription permanently",
     "destroy database", "drop all tables",
@@ -24,6 +23,12 @@ HIGH_STAKES_KEYWORDS = [
     "sudo rm", "sudo rm -rf",
     "expose private key", "expose secret key", "steal api key",
     "leak credentials", "share password",
+]
+
+# Payment/checkout tasks need human approval but are allowed to proceed
+PAYMENT_APPROVAL_KEYWORDS = [
+    "checkout", "purchase", "buy", "place order", "add to cart",
+    "payment", "pay for", "complete order",
 ]
 
 DANGEROUS_PATTERNS = [
@@ -50,6 +55,15 @@ class SafetyAgent:
           { "approved": True/False, "reason": "...", "requires_human": False/True }
         """
         action_lower = action_description.lower()
+
+        # Payment/checkout: require human approval but allow execution
+        for keyword in PAYMENT_APPROVAL_KEYWORDS:
+            if keyword in action_lower:
+                return {
+                    "approved": True,
+                    "reason": f"Payment task '{keyword}' — requires human confirmation before final purchase",
+                    "requires_human": True,
+                }
 
         # Check 1: High-stakes actions need confirmation
         for keyword in HIGH_STAKES_KEYWORDS:

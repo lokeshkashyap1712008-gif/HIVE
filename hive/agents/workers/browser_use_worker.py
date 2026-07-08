@@ -1,11 +1,13 @@
 """Browser Use worker - autonomous browser automation using Browser Use library.
 
-Uses Chrome profile with saved logins and DashScope Qwen as LLM.
+Uses a dedicated cloned Chrome profile (or user's Chrome profile) with saved logins.
 """
 import os
 import asyncio
 import logging
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -13,6 +15,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+from hive.config import QWEN_MODEL, DASHSCOPE_API_KEY, CHROME_AUTOMATION_PROFILE
 
 # Browser Use requires its own LLM integration
 try:
@@ -22,6 +26,12 @@ try:
 except ImportError:
     BROWSER_USE_AVAILABLE = False
     logger.warning("browser-use not installed")
+
+# Source Chrome profile paths (Windows)
+CHROME_SOURCE_PROFILES = [
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data"),
+]
 
 
 def _is_chrome_running() -> bool:
@@ -38,17 +48,68 @@ def _is_chrome_running() -> bool:
         return False
 
 
-# Chrome profile paths (Windows)
-CHROME_PROFILES = [
-    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"),
-    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data"),
-]
+def _find_source_chrome_profile() -> Optional[str]:
+    """Find existing Chrome profile directory."""
+    for path in CHROME_SOURCE_PROFILES:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _ensure_automation_profile() -> str:
+    """Clone Chrome profile to dedicated automation dir if needed.
+
+    This allows automation while user's normal Chrome can stay open.
+  Profile is refreshed if older than 7 days.
+    """
+    import time
+    automation_dir = Path(CHROME_AUTOMATION_PROFILE)
+    marker = automation_dir / ".profile_ready"
+    max_age = 7 * 24 * 3600
+
+    if marker.exists():
+        age = time.time() - marker.stat().st_mtime
+        if age < max_age and (automation_dir / "Default").exists():
+            return str(automation_dir)
+
+    source = _find_source_chrome_profile()
+    automation_dir.mkdir(parents=True, exist_ok=True)
+
+    if source and os.path.exists(source):
+        # Copy only essential profile data (not full cache)
+        for item in ["Default", "Local State"]:
+            src = os.path.join(source, item)
+            dst = automation_dir / item
+            if os.path.exists(src):
+                try:
+                    if os.path.isdir(src):
+                        if dst.exists():
+                            shutil.rmtree(dst, ignore_errors=True)
+                        shutil.copytree(
+                            src, dst,
+                            ignore=shutil.ignore_patterns(
+                                "Cache", "Code Cache", "GPUCache", "Service Worker",
+                                "ShaderCache", "*.tmp", "Crashpad",
+                            ),
+                            dirs_exist_ok=True,
+                        )
+                    else:
+                        shutil.copy2(src, dst)
+                except Exception as e:
+                    logger.warning("Could not copy %s: %s", item, e)
+        logger.info("Cloned Chrome profile to automation dir: %s", automation_dir)
+    else:
+        logger.info("No source Chrome profile found; using fresh automation profile")
+
+    marker.touch()
+    return str(automation_dir)
+
 
 BROWSER_USE_WORKER_INSTRUCTIONS = """
 BROWSER USE WORKER - Full Browser Automation
 
 You control a real web browser using Browser Use.
-The browser has access to the user's Chrome profile with saved logins.
+The browser has access to saved logins from a cloned Chrome profile.
 You can navigate, click, type, read, and interact with any website.
 
 CAPABILITIES:
@@ -67,33 +128,15 @@ WHAT YOU CAN DO:
 - Navigate between pages
 - Extract information
 - Submit data
-- Star/unstar repositories
-- Post content
+- Complete checkout flows (with human confirmation for final purchase)
 
 LIMITATIONS:
-- Chrome must be closed when using saved profile
 - Some sites may block automation
 - 2FA may require user input
 - Complex CAPTCHAs may fail
 
-WORKFLOW:
-1. Start browser with Chrome profile
-2. Navigate to target URL
-3. Read page content
-4. Interact with elements (click, type, etc.)
-5. Verify results
-6. Report outcome
-
 The browser will be VISIBLE so you can see what's happening.
 """
-
-
-def _find_chrome_profile() -> Optional[str]:
-    """Find existing Chrome profile directory."""
-    for path in CHROME_PROFILES:
-        if os.path.exists(path):
-            return path
-    return None
 
 
 async def _run_browser_use_task(
@@ -102,41 +145,25 @@ async def _run_browser_use_task(
     headless: bool = False,
     max_steps: int = 30,
 ) -> str:
-    """Run a browser automation task using Browser Use.
-
-    Args:
-        task: Description of what to do in the browser
-        profile_dir: Chrome profile directory (auto-detected if None)
-        headless: Run browser invisibly (default: visible)
-        max_steps: Maximum steps before giving up
-
-    Returns:
-        Task result as string
-    """
+    """Run a browser automation task using Browser Use."""
     if not BROWSER_USE_AVAILABLE:
         return "ERROR: browser-use library not installed. Run: pip install browser-use"
 
-    # Auto-detect Chrome profile
     if profile_dir is None:
-        profile_dir = _find_chrome_profile()
-        if profile_dir:
-            logger.info(f"Using Chrome profile: {profile_dir}")
-        else:
-            logger.warning("No Chrome profile found, using fresh browser")
+        profile_dir = _ensure_automation_profile()
+        logger.info("Using automation Chrome profile: %s", profile_dir)
 
-    # Configure LLM (DashScope Qwen via OpenAI-compatible API)
-    api_key = os.getenv("DASHSCOPE_API_KEY")
+    api_key = DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
         return "ERROR: DASHSCOPE_API_KEY not set in .env"
 
     llm = ChatOpenAI(
-        model="qwen3.7-plus",
+        model=QWEN_MODEL,
         api_key=api_key,
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         temperature=0.1,
     )
 
-    # Configure browser
     browser_config = {
         "headless": headless,
         "disable_security": False,
@@ -145,27 +172,12 @@ async def _run_browser_use_task(
         ],
     }
 
-    # Try to use Chrome profile if available
-    use_profile = False
     if profile_dir and os.path.exists(profile_dir):
-        # Check if Chrome is running - if so, profile is locked
-        if _is_chrome_running():
-            logger.warning("Chrome is running. Profile is locked. Using fresh browser.")
-            use_profile = False
-        else:
-            # Chrome not running, safe to use profile
-            use_profile = True
-            logger.info(f"Using Chrome profile: {profile_dir}")
-
-    # Only add user_data_dir if we can access the profile
-    if use_profile:
         browser_config["user_data_dir"] = profile_dir
 
-    # Create browser instance
     browser = Browser(**browser_config)
 
     try:
-        # Create and run agent
         agent = Agent(
             task=task,
             llm=llm,
@@ -175,16 +187,13 @@ async def _run_browser_use_task(
 
         history = await agent.run(max_steps=max_steps)
 
-        # Extract result from history
         try:
-            # AgentHistoryList has a final_result() method
             final_result = history.final_result()
             if final_result:
                 return f"Task completed successfully.\n\nResult:\n{final_result}"
             return "Task completed but no result returned."
         except Exception as e:
-            # Fallback: try to get the last action result
-            logger.warning(f"Could not extract final result: {e}")
+            logger.warning("Could not extract final result: %s", e)
             return "Task completed successfully."
 
     except Exception as e:
@@ -202,17 +211,7 @@ def run_browser_task(
     headless: bool = False,
     max_steps: int = 30,
 ) -> str:
-    """Synchronous wrapper for browser task.
-
-    Args:
-        task: Description of what to do
-        profile_dir: Chrome profile directory (auto-detected if None)
-        headless: Run browser invisibly
-        max_steps: Maximum steps before giving up
-
-    Returns:
-        Task result as string
-    """
+    """Synchronous wrapper for browser task."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -232,17 +231,8 @@ def run_browser_task(
 
 
 async def run(task: str, context: Optional[dict] = None) -> dict:
-    """HIVE worker interface - run browser task using Browser Use.
-
-    Args:
-        task: Task description
-        context: Optional context with task details
-
-    Returns:
-        Result dict with status and output
-    """
+    """HIVE worker interface - run browser task using Browser Use."""
     try:
-        # Extract task from context if provided
         actual_task = task
         if context and "task" in context:
             actual_task = context["task"]
@@ -259,7 +249,7 @@ async def run(task: str, context: Optional[dict] = None) -> dict:
             "worker": "browser_use_worker",
         }
     except Exception as e:
-        logger.error(f"Browser use worker failed: {e}")
+        logger.error("Browser use worker failed: %s", e)
         return {
             "status": "error",
             "error": str(e),
@@ -267,22 +257,21 @@ async def run(task: str, context: Optional[dict] = None) -> dict:
         }
 
 
-# Tool definition for HIVE integration
 BROWSER_USE_TOOL = {
     "type": "function",
     "function": {
         "name": "browser_use_task",
-        "description": "Automate browser tasks using a real Chrome browser with saved logins. Can login, fill forms, click buttons, navigate, and interact with any website. Uses Browser Use library for reliable automation.",
+        "description": "Automate browser tasks using a real Chrome browser with saved logins. Can login, fill forms, click buttons, navigate, and interact with any website.",
         "parameters": {
             "type": "object",
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Description of the browser task to perform (e.g., 'Login to GitHub and star the HIVE repo')"
+                    "description": "Description of the browser task to perform",
                 },
                 "headless": {
                     "type": "boolean",
-                    "description": "Run browser invisibly (default: false, shows browser window)",
+                    "description": "Run browser invisibly (default: false)",
                     "default": False,
                 },
                 "max_steps": {
@@ -298,7 +287,6 @@ BROWSER_USE_TOOL = {
 
 
 if __name__ == "__main__":
-    # Test the worker
     result = run_browser_task(
         "Go to https://github.com and take a screenshot",
         headless=False,

@@ -102,10 +102,22 @@ def revoke_session(session_id: str) -> bool:
 async def run(task: str) -> dict:
     task_lower = task.lower()
 
+    if "google login" in task_lower or "login google" in task_lower:
+        from hive.browser.google_login import run_google_login
+        import re
+        email_match = re.search(r'[\w.+-]+@gmail\.com', task)
+        return await run_google_login(email=email_match.group(0) if email_match else None)
+
     if "oauth" in task_lower or "authorize" in task_lower:
         import re
-        platform_match = re.search(r'(github|slack|discord|stripe|paypal|google|microsoft)', task_lower)
-        platform = platform_match.group(0) if platform_match else "unknown"
+        platform_match = re.search(
+            r'(github|google|slack|discord|stripe|paypal|microsoft)', task_lower
+        )
+        platform = platform_match.group(0) if platform_match else "github"
+
+        if platform in ("github", "google"):
+            from hive.browser.oauth import start_oauth
+            return await start_oauth(platform)
 
         return {
             "status": "auth_required",
@@ -147,9 +159,10 @@ async def run(task: str) -> dict:
     else:
         return {
             "status": "ok",
-            "message": "Account Manager: supports OAuth2, 2FA/TOTP, session management",
+            "message": "Account Manager: OAuth2, Google login, 2FA/TOTP, sessions",
             "examples": [
                 "authorize github via OAuth2",
+                "google login",
                 "verify 2fa with secret XXX code 123456",
                 "list active sessions",
             ],

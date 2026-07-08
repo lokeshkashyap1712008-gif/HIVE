@@ -22,7 +22,7 @@ from rich import box
 from rich.panel import Panel
 from rich.table import Table
 from rich.markdown import Markdown
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from rich.live import Live
 from rich.layout import Layout
@@ -32,7 +32,7 @@ console = get_console()
 SLASH_COMMANDS = [
     "/help", "/quit", "/exit", "/sessions", "/resume",
     "/agents", "/skills", "/model", "/clear", "/status", "/swarm",
-    "/cleanup", "/create-agent",
+    "/cleanup", "/create-agent", "/google-login", "/oauth",
 ]
 
 TEST_MODE = False
@@ -76,6 +76,8 @@ def _print_help():
         "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
         "[prompt]/cleanup[/prompt]        Run agent garbage collection\n"
         "[prompt]/create-agent \\[task][/prompt]  Create a specialist agent\n"
+        "[prompt]/google-login[/prompt]     Open browser for manual Google sign-in\n"
+        "[prompt]/oauth \\[github|google][/prompt]  OAuth login flow\n"
         "[prompt]/clear[/prompt]          Clear screen"
     )
     console.print(Panel(
@@ -130,6 +132,71 @@ async def permission_prompt(tool_name: str, target: str, tier: str) -> str:
     return "approved" if approved else "denied"
 
 
+async def cli_prompt_2fa(site: str, message: str) -> str | None:
+    panel = Panel(
+        f"[bold]Site:[/bold] {site}\n{message or 'Enter your verification code.'}",
+        title="[permission]Verification Code Required[/permission]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(panel)
+    try:
+        code = await asyncio.to_thread(
+            Prompt.ask, "  Enter 6-digit code", password=True
+        )
+        return code.strip() if code else None
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+async def cli_prompt_checkout_confirm(amount: float, merchant: str, url: str) -> bool:
+    amt = f"${amount:.2f}" if amount else "unknown amount"
+    panel = Panel(
+        f"[bold]Merchant:[/bold] {merchant}\n"
+        f"[bold]Amount:[/bold] {amt}\n"
+        f"[bold]URL:[/bold] {url or 'see browser'}",
+        title="[permission]Confirm Purchase[/permission]",
+        border_style="yellow",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(panel)
+    try:
+        return await asyncio.to_thread(
+            Confirm.ask, f"  Place order for {amt}?", default=False
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+async def cli_prompt_captcha_handoff(site: str, url: str) -> bool:
+    panel = Panel(
+        f"[bold]Site:[/bold] {site}\n"
+        f"[bold]URL:[/bold] {url}\n\n"
+        "Solve the CAPTCHA in the browser window, then press Enter here.",
+        title="[permission]CAPTCHA — Human Required[/permission]",
+        border_style="magenta",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(panel)
+    try:
+        await asyncio.to_thread(input, "  Press Enter when CAPTCHA is solved... ")
+        return True
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def _register_interactive_handlers():
+    from hive.interactive import register_handlers
+    register_handlers(
+        prompt_2fa=cli_prompt_2fa,
+        prompt_checkout_confirm=cli_prompt_checkout_confirm,
+        prompt_captcha_handoff=cli_prompt_captcha_handoff,
+    )
+
+
 class HiveCLI:
     """Main CLI application."""
 
@@ -166,6 +233,7 @@ class HiveCLI:
 
         llm = QwenClient(api_key=DASHSCOPE_API_KEY, model=QWEN_MODEL)
         self.leader = Leader(llm)
+        _register_interactive_handlers()
 
         try:
             await llm.chat([{"role": "user", "content": "ping"}])
@@ -486,6 +554,41 @@ class HiveCLI:
             except Exception as e:
                 console.print(f"[bold red]Error:[/bold red] {e}\n")
 
+        elif command == "/oauth":
+            platform = (arg or "github").lower().strip()
+            if platform not in ("github", "google"):
+                console.print("[bold yellow]Usage:[/bold yellow] /oauth github  or  /oauth google\n")
+                return
+            console.print(f"[cyan]Starting OAuth for {platform}...[/cyan]")
+            console.print("[dim]A browser window will open. Authorize HIVE, then return here.[/dim]\n")
+            try:
+                from hive.browser.oauth import start_oauth
+                result = await start_oauth(platform)
+                if result.get("status") == "completed":
+                    console.print(f"[success]OAuth complete![/success] User: {result.get('user_id')}")
+                    console.print(f"  Session ID: [code]{result.get('session_id')}[/code]\n")
+                else:
+                    msg = result.get("reason") or result.get("instruction") or str(result)
+                    console.print(f"[yellow]{msg}[/yellow]\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
+        elif command == "/google-login":
+            email = arg.strip() if arg else None
+            console.print("[cyan]Opening Google sign-in in a visible browser...[/cyan]")
+            console.print("[dim]Log in manually (CAPTCHA, 2FA OK). HIVE saves your session when done.[/dim]\n")
+            try:
+                from hive.browser.google_login import run_google_login
+                result = await run_google_login(email=email)
+                if result.get("status") == "completed":
+                    console.print(f"[success]{result['message']}[/success]")
+                    console.print(f"  Email: {result.get('email', 'unknown')}")
+                    console.print(f"  Session: [code]{result.get('session_name')}[/code]\n")
+                else:
+                    console.print(f"[yellow]{result.get('message', result)}[/yellow]\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
         else:
             console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")
 
@@ -571,6 +674,7 @@ class HiveServer:
         self.db = None
         self.running = True
         self._pending_permissions: dict[str, asyncio.Future] = {}
+        self._pending_interactive: dict[str, asyncio.Future] = {}
         self._task_start = 0.0
 
     def _send(self, msg: dict):
@@ -612,6 +716,9 @@ class HiveServer:
         llm = QwenClient(api_key=DASHSCOPE_API_KEY, model=QWEN_MODEL)
         self.leader = Leader(llm)
 
+        # Register interactive handlers for the Ink frontend.
+        self._register_interactive_handlers()
+
         # Validate API key on first use (lazy) — skip upfront ping to avoid timeout
         self._api_key_validated = False
 
@@ -632,6 +739,79 @@ class HiveServer:
             await end_session(self.db, self.session_id)
             self.leader.shutdown()
             await self.db.close()
+
+    def _register_interactive_handlers(self) -> None:
+        """Register human-in-the-loop prompt handlers for Ink frontend."""
+        import asyncio as _asyncio
+        import uuid as _uuid
+        from hive.interactive import register_handlers
+
+        async def prompt_2fa_code(site: str, message: str):
+            req_id = str(_uuid.uuid4())[:8]
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
+            self._pending_interactive[req_id] = fut
+            self._send(
+                {
+                    "type": "interactive_prompt",
+                    "kind": "2fa",
+                    "request_id": req_id,
+                    "site": site,
+                    "message": message or "",
+                }
+            )
+            try:
+                return await _asyncio.wait_for(fut, timeout=600.0)
+            except _asyncio.TimeoutError:
+                self._pending_interactive.pop(req_id, None)
+                return None
+
+        async def prompt_checkout_confirm(amount: float, merchant: str, url: str = ""):
+            req_id = str(_uuid.uuid4())[:8]
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
+            self._pending_interactive[req_id] = fut
+            self._send(
+                {
+                    "type": "interactive_prompt",
+                    "kind": "checkout_confirm",
+                    "request_id": req_id,
+                    "amount": amount,
+                    "merchant": merchant,
+                    "url": url or "",
+                }
+            )
+            try:
+                return bool(await _asyncio.wait_for(fut, timeout=600.0))
+            except _asyncio.TimeoutError:
+                self._pending_interactive.pop(req_id, None)
+                return False
+
+        async def prompt_captcha_handoff(site: str, url: str = ""):
+            req_id = str(_uuid.uuid4())[:8]
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
+            self._pending_interactive[req_id] = fut
+            self._send(
+                {
+                    "type": "interactive_prompt",
+                    "kind": "captcha_handoff",
+                    "request_id": req_id,
+                    "site": site,
+                    "url": url or "",
+                }
+            )
+            try:
+                return bool(await _asyncio.wait_for(fut, timeout=600.0))
+            except _asyncio.TimeoutError:
+                self._pending_interactive.pop(req_id, None)
+                return False
+
+        register_handlers(
+            prompt_2fa=prompt_2fa_code,
+            prompt_checkout_confirm=prompt_checkout_confirm,
+            prompt_captcha_handoff=prompt_captcha_handoff,
+        )
 
     def _patch_dashboard(self):
         """Patch dashboard methods to forward messages to frontend."""
@@ -716,6 +896,13 @@ class HiveServer:
                 future = self._pending_permissions.pop(request_id, None)
                 if future and not future.done():
                     future.set_result(decision)
+
+            elif msg_type == "interactive_response":
+                request_id = msg.get("request_id", "")
+                result = msg.get("result")
+                future = self._pending_interactive.pop(request_id, None)
+                if future and not future.done():
+                    future.set_result(result)
 
     async def _handle_user_message(self, text: str):
         """Process a user message and stream results back."""

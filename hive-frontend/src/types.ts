@@ -32,3 +32,14 @@ export interface PermissionRequest {
   tier: string;
   request_id: string;
 }
+
+export interface InteractivePromptRequest {
+  type: 'interactive_prompt';
+  kind: '2fa' | 'checkout_confirm' | 'captcha_handoff';
+  request_id: string;
+  site?: string;
+  message?: string;
+  amount?: number;
+  merchant?: string;
+  url?: string;
+}

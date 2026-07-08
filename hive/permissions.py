@@ -42,6 +42,24 @@ TOOL_TIERS = {
     "browser_inspect": "safe",
     "browser_back": "safe",
     "browser_close": "safe",
+    "browser_session_save": "moderate",
+    "browser_session_load": "safe",
+    "browser_list_sessions": "safe",
+    "browser_delete_session": "moderate",
+    "browser_create_inbox": "moderate",
+    "browser_wait_for_code": "safe",
+    # Browser Use tool (Chrome profile)
+    "browser_use_task": "moderate",
+    # Vault tools
+    "vault_store_credential": "sensitive",
+    "vault_list_credentials": "safe",
+    "vault_store_card": "sensitive",
+    "vault_list_cards": "safe",
+    # Signup & checkout
+    "browser_signup": "moderate",
+    "browser_checkout": "sensitive",
+    "browser_google_login": "moderate",
+    "browser_oauth": "moderate",
 }
 
 # Compiled dangerous patterns

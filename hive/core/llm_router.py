@@ -5,6 +5,7 @@ All agents call llm_router.chat() — never call providers directly
 """
 
 import logging
+import os
 from typing import Optional
 
 from hive.llm import QwenClient
@@ -15,9 +16,9 @@ logger = logging.getLogger(__name__)
 # ─── Model Names ─────────────────────────────────────────────────────────────
 QWEN_TURBO = "qwen-turbo"
 QWEN_PLUS = "qwen-plus"
-QWEN_MAX = "qwen3.7-plus"
+QWEN_MAX = os.environ.get("QWEN_MODEL", "qwen-max")
 QWEN_CODER = "qwen-coder"
-QWEN_REASON = "qwen3.7-plus"
+QWEN_REASON = os.environ.get("QWEN_MODEL", "qwen-max")
 
 DEFAULT_MODEL = QWEN_MAX
 

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "site": "example.com",
+  "trust_score": 16,
+  "sessions": {
+    "example_com": {
+      "flow": "login",
+      "saved_at": 1783509267.0490127
+    }
+  },
+  "login": {
+    "last_success_at": 1783509267.0490127,
+    "session_name": "example_com",
+    "last_url": "https://example.com/dashboard",
+    "note": "ok"
+  },
+  "signup": {},
+  "checkout": {},
+  "updated_at": 1783509267.0509362
+}
