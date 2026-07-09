@@ -440,6 +440,40 @@ TOOLS = {
 }
 
 
+# ─── MCP Tool Registration ──────────────────────────────────────────────
+
+def register_mcp_tools(mcp_tools: dict):
+    """Register MCP tools into the TOOLS registry.
+
+    Args:
+        mcp_tools: Dict of {hive_tool_name: hive_tool_spec} from MCP bridge
+    """
+    for name, spec in mcp_tools.items():
+        TOOLS[name] = spec
+
+
+def unregister_mcp_tools(server_name: str):
+    """Remove all MCP tools from a specific server.
+
+    Args:
+        server_name: The MCP server name (e.g., 'gmail')
+    """
+    prefix = f"mcp_{server_name}__"
+    keys_to_remove = [k for k in TOOLS if k.startswith(prefix)]
+    for key in keys_to_remove:
+        del TOOLS[key]
+
+
+def get_mcp_tool_info(tool_name: str) -> dict | None:
+    """Get MCP metadata for a tool if it's an MCP tool.
+
+    Returns the _mcp dict with server and original tool name,
+    or None if not an MCP tool.
+    """
+    spec = TOOLS.get(tool_name, {})
+    return spec.get("_mcp")
+
+
 async def execute_tool(tool_name: str, **kwargs) -> dict:
     """Execute a tool and return result."""
     start = time.time()
@@ -684,6 +718,13 @@ async def execute_tool(tool_name: str, **kwargs) -> dict:
                 result = await _browser_google_login(kwargs.get("email"))
             elif tool_name == "browser_oauth":
                 result = await _browser_oauth(kwargs.get("platform", "github"))
+            # ─── MCP Tools ────────────────────────────────────────
+            elif tool_name.startswith("mcp_"):
+                from hive.mcp.bridge import mcp_bridge
+                if mcp_bridge.is_mcp_tool(tool_name):
+                    result = await mcp_bridge.execute_mcp_tool(tool_name, **kwargs)
+                else:
+                    result = {"error": f"Unknown MCP tool: {tool_name}"}
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}
 

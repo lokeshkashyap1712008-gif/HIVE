@@ -427,6 +427,16 @@ async def run_swarm(task_description: str) -> dict:
     start_time = time.time()
     dash = get_dashboard()
 
+    # Register MCP tools so workers can use them
+    try:
+        from hive.mcp.bridge import mcp_bridge
+        mcp_tools = mcp_bridge.get_hive_tools()
+        if mcp_tools:
+            from hive.tools import register_mcp_tools
+            register_mcp_tools(mcp_tools)
+    except ImportError:
+        pass
+
     # Dashboard: task start
     dash.set_task(task_description)
     dash.set_status("routing")

@@ -70,7 +70,21 @@ _dangerous_re = [re.compile(p) for p in DENIED_PATTERNS]
 
 def get_tool_tier(tool_name: str) -> str:
     """Get risk tier for a tool."""
+    # MCP tools default to moderate tier
+    if tool_name.startswith("mcp_"):
+        return TOOL_TIERS.get(tool_name, "moderate")
     return TOOL_TIERS.get(tool_name, "moderate")
+
+
+def register_mcp_tier(tool_name: str, tier: str = "moderate"):
+    """Register a permission tier for an MCP tool."""
+    if tier in TIERS:
+        TOOL_TIERS[tool_name] = tier
+
+
+def is_mcp_tool(tool_name: str) -> bool:
+    """Check if a tool name belongs to an MCP server."""
+    return tool_name.startswith("mcp_")
 
 
 def check_dangerous_command(command: str) -> bool:

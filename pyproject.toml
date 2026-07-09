@@ -41,6 +41,7 @@ dependencies = [
     "pyotp>=2.9.0",
     "cryptography>=42.0.0",
     "keyring>=25.0.0",
+    "mcp>=1.27,<2",
 ]
 
 [project.optional-dependencies]

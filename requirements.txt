@@ -15,5 +15,6 @@ pyperclip>=1.8
 pyotp>=2.9.0
 cryptography>=42.0.0
 keyring>=25.0.0
+mcp>=1.27,<2
 # Optional: browser-use for Chrome-profile automation
 # browser-use>=0.1.40

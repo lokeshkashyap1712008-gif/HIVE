@@ -33,6 +33,7 @@ SLASH_COMMANDS = [
     "/help", "/quit", "/exit", "/sessions", "/resume",
     "/agents", "/skills", "/model", "/clear", "/status", "/swarm",
     "/cleanup", "/create-agent", "/google-login", "/oauth",
+    "/mcp",
 ]
 
 TEST_MODE = False
@@ -76,6 +77,7 @@ def _print_help():
         "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
         "[prompt]/cleanup[/prompt]        Run agent garbage collection\n"
         "[prompt]/create-agent \\[task][/prompt]  Create a specialist agent\n"
+        "[prompt]/mcp[/prompt]            Manage MCP servers (add, remove, tools)\n"
         "[prompt]/google-login[/prompt]     Open browser for manual Google sign-in\n"
         "[prompt]/oauth \\[github|google][/prompt]  OAuth login flow\n"
         "[prompt]/clear[/prompt]          Clear screen"
@@ -597,8 +599,252 @@ class HiveCLI:
             except Exception as e:
                 console.print(f"[bold red]Error:[/bold red] {e}\n")
 
+        elif command == "/mcp":
+            await self._handle_mcp_command(arg)
+
         else:
             console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")
+
+    async def _handle_mcp_command(self, arg: str):
+        """Handle /mcp commands for MCP server management."""
+        from hive.mcp.config import mcp_config, MCPServerConfig
+        from hive.mcp.client import mcp_client
+        from hive.mcp.bridge import mcp_bridge
+        from hive.tools import register_mcp_tools, unregister_mcp_tools
+
+        parts = arg.split(maxsplit=2) if arg else []
+        subcommand = parts[0] if parts else ""
+
+        if not subcommand or subcommand == "status":
+            # /mcp or /mcp status — show all servers
+            servers = mcp_config.list_servers()
+            if not servers:
+                console.print("[dim]No MCP servers configured.[/dim]\n")
+                console.print("[muted]Add a server with:[/muted] [prompt]/mcp add <name> <url>[/prompt]\n")
+                return
+
+            table = _table("MCP Servers")
+            table.add_column("Name", style="agent")
+            table.add_column("URL", style="dim", max_width=40)
+            table.add_column("Status", style="white")
+            table.add_column("Tools", style="green", justify="right")
+
+            for server in servers:
+                status = "[green]● connected[/green]" if mcp_client.is_connected(server.name) else "[red]○ offline[/red]"
+                tool_count = len(mcp_bridge.get_tools_for_server(server.name)) if mcp_client.is_connected(server.name) else "—"
+                if not server.enabled:
+                    status = "[yellow]○ disabled[/yellow]"
+                table.add_row(server.name, server.url, status, str(tool_count))
+
+            console.print(table)
+            console.print()
+
+        elif subcommand == "add":
+            # /mcp add <name> <url> [auth_header]
+            if len(parts) < 3:
+                console.print("[bold yellow]Usage:[/bold yellow] /mcp add <name> <url> [auth_token]\n")
+                console.print("[dim]Example: /mcp add gmail https://gmail-mcp.example.com/mcp your-api-key[/dim]\n")
+                return
+
+            name = parts[1]
+            url = parts[2]
+            auth_token = parts[3] if len(parts) > 3 else None
+
+            headers = {}
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
+            config = MCPServerConfig(name=name, url=url, headers=headers)
+            success, msg = mcp_config.add_server(config)
+            if not success:
+                console.print(f"[bold red]Error:[/bold red] {msg}\n")
+                return
+
+            console.print(f"[cyan]Connecting to {name}...[/cyan]")
+            try:
+                success, connect_msg = await mcp_client.connect(config)
+                if not success:
+                    console.print(f"[yellow]Config saved but connection failed:[/yellow] {connect_msg}\n")
+                    return
+
+                # Discover tools
+                ok, tools = await mcp_client.list_tools(name)
+                if ok and tools:
+                    # Register tools
+                    from hive.mcp.bridge import convert_mcp_tool_to_hive
+                    mcp_tools = {}
+                    for tool in tools:
+                        hive_name, hive_tool = convert_mcp_tool_to_hive(name, tool)
+                        mcp_tools[hive_name] = hive_tool
+                    register_mcp_tools(mcp_tools)
+                    mcp_bridge._server_tools[name] = list(mcp_tools.keys())
+                    for hn in mcp_tools:
+                        mcp_bridge._tool_map[hn] = (name, tool["name"])
+
+                    console.print(f"[success]Connected![/success] {len(tools)} tools available\n")
+                    for tool in tools:
+                        console.print(f"  [dim]•[/dim] {tool['name']}: {tool.get('description', '')[:60]}")
+                    console.print()
+                else:
+                    console.print(f"[success]Connected![/success] No tools found\n")
+
+            except Exception as e:
+                console.print(f"[yellow]Connection error:[/yellow] {e}\n")
+
+        elif subcommand == "remove":
+            # /mcp remove <name>
+            if len(parts) < 2:
+                console.print("[bold yellow]Usage:[/bold yellow] /mcp remove <name>\n")
+                return
+
+            name = parts[1]
+            if mcp_client.is_connected(name):
+                await mcp_client.disconnect(name)
+                unregister_mcp_tools(name)
+
+            success, msg = mcp_config.remove_server(name)
+            if success:
+                console.print(f"[success]{msg}[/success]\n")
+            else:
+                console.print(f"[bold red]Error:[/bold red] {msg}\n")
+
+        elif subcommand == "connect":
+            # /mcp connect <name>
+            if len(parts) < 2:
+                console.print("[bold yellow]Usage:[/bold yellow] /mcp connect <name>\n")
+                return
+
+            name = parts[1]
+            config = mcp_config.get_server(name)
+            if not config:
+                console.print(f"[bold red]Error:[/bold red] Server '{name}' not found. Use /mcp add first.\n")
+                return
+
+            if mcp_client.is_connected(name):
+                console.print(f"[dim]Already connected to {name}.[/dim]\n")
+                return
+
+            console.print(f"[cyan]Connecting to {name}...[/cyan]")
+            try:
+                success, msg = await mcp_client.connect(config)
+                if success:
+                    # Discover tools
+                    ok, tools = await mcp_client.list_tools(name)
+                    if ok and tools:
+                        from hive.mcp.bridge import convert_mcp_tool_to_hive
+                        mcp_tools = {}
+                        for tool in tools:
+                            hive_name, hive_tool = convert_mcp_tool_to_hive(name, tool)
+                            mcp_tools[hive_name] = hive_tool
+                        register_mcp_tools(mcp_tools)
+                        mcp_bridge._server_tools[name] = list(mcp_tools.keys())
+                        for hn in mcp_tools:
+                            mcp_bridge._tool_map[hn] = (name, tool["name"])
+                        console.print(f"[success]Connected![/success] {len(tools)} tools available\n")
+                    else:
+                        console.print(f"[success]Connected![/success]\n")
+                else:
+                    console.print(f"[bold red]Error:[/bold red] {msg}\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
+        elif subcommand == "disconnect":
+            # /mcp disconnect <name>
+            if len(parts) < 2:
+                console.print("[bold yellow]Usage:[/bold yellow] /mcp disconnect <name>\n")
+                return
+
+            name = parts[1]
+            success, msg = await mcp_client.disconnect(name)
+            if success:
+                unregister_mcp_tools(name)
+                console.print(f"[success]{msg}[/success]\n")
+            else:
+                console.print(f"[bold red]Error:[/bold red] {msg}\n")
+
+        elif subcommand == "tools":
+            # /mcp tools [server_name]
+            server_name = parts[1] if len(parts) > 1 else None
+
+            if server_name:
+                # Show tools for specific server
+                tool_names = mcp_bridge.get_tools_for_server(server_name)
+                if not tool_names:
+                    console.print(f"[dim]No tools found for '{server_name}'.[/dim]\n")
+                    return
+
+                table = _table(f"MCP Tools: {server_name}")
+                table.add_column("Tool", style="code")
+                table.add_column("Description", style="white", max_width=50)
+
+                for hn in tool_names:
+                    _, original = mcp_bridge._tool_map.get(hn, ("", hn))
+                    spec = TOOLS.get(hn, {})
+                    desc = spec.get("description", "")
+                    # Remove the [MCP: ...] suffix for cleaner display
+                    if " [MCP:" in desc:
+                        desc = desc[:desc.index(" [MCP:")]
+                    table.add_row(original, desc)
+
+                console.print(table)
+                console.print()
+            else:
+                # Show all MCP tools
+                all_tools = mcp_bridge.get_hive_tools()
+                if not all_tools:
+                    console.print("[dim]No MCP tools available.[/dim]\n")
+                    console.print("[muted]Connect to an MCP server with:[/muted] /mcp connect <name>\n")
+                    return
+
+                table = _table("All MCP Tools")
+                table.add_column("Server", style="agent")
+                table.add_column("Tool", style="code")
+                table.add_column("Description", style="white", max_width=45)
+
+                for hn, spec in sorted(all_tools.items()):
+                    server = mcp_bridge.get_server_for_tool(hn) or "?"
+                    _, original = mcp_bridge._tool_map.get(hn, ("", hn))
+                    desc = spec.get("description", "")
+                    if " [MCP:" in desc:
+                        desc = desc[:desc.index(" [MCP:")]
+                    table.add_row(server, original, desc[:60])
+
+                console.print(table)
+                console.print(f"  [dim]{len(all_tools)} tools from {len(mcp_bridge._server_tools)} servers[/dim]\n")
+
+        elif subcommand == "resources":
+            # /mcp resources [server_name]
+            server_name = parts[1] if len(parts) > 1 else None
+            servers = [server_name] if server_name else list(mcp_bridge._server_tools.keys())
+
+            if not servers:
+                console.print("[dim]No connected MCP servers.[/dim]\n")
+                return
+
+            for srv in servers:
+                ok, resources = await mcp_client.list_resources(srv)
+                if not ok:
+                    console.print(f"[dim]{srv}: {resources}[/dim]")
+                    continue
+
+                if resources:
+                    console.print(f"\n[bold]{srv}[/bold] resources:")
+                    for r in resources:
+                        console.print(f"  [dim]•[/dim] {r.get('uri', '?')} — {r.get('name', '')}")
+
+            console.print()
+
+        else:
+            console.print("[bold yellow]MCP Commands:[/bold yellow]\n")
+            console.print("  [prompt]/mcp[/prompt]                          Show all MCP servers\n")
+            console.print("  [prompt]/mcp add[/prompt] <name> <url> [token]  Add and connect to a server\n")
+            console.print("  [prompt]/mcp remove[/prompt] <name>              Remove an MCP server\n")
+            console.print("  [prompt]/mcp connect[/prompt] <name>             Connect to a server\n")
+            console.print("  [prompt]/mcp disconnect[/prompt] <name>          Disconnect from a server\n")
+            console.print("  [prompt]/mcp tools[/prompt] [server]             List MCP tools\n")
+            console.print("  [prompt]/mcp resources[/prompt] [server]         List MCP resources\n")
+            console.print("  [prompt]/mcp status[/prompt]                     Show connection status\n")
+            console.print()
 
     async def _run_test_mode(self):
         """Run in test mode with mock responses."""

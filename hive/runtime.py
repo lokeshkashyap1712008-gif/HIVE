@@ -73,6 +73,16 @@ class AgentRuntime:
     async def run_loop(self, session_id: str, messages: list[dict],
                        on_tool_call=None, on_permission=None, on_text=None) -> str:
         """Main agent loop: send to LLM, execute tools, repeat. Uses streaming for fast token display."""
+        # Merge MCP tools into TOOLS registry
+        try:
+            from hive.mcp.bridge import mcp_bridge
+            mcp_tools = mcp_bridge.get_hive_tools()
+            if mcp_tools:
+                from hive.tools import register_mcp_tools
+                register_mcp_tools(mcp_tools)
+        except ImportError:
+            pass
+
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
         iteration = 0
@@ -213,6 +223,16 @@ class AgentRuntime:
     async def run_loop_streaming(self, session_id: str, messages: list[dict],
                                   live=None, dash=None) -> str:
         """Agent loop with streaming output - tokens appear line by line."""
+        # Merge MCP tools into TOOLS registry
+        try:
+            from hive.mcp.bridge import mcp_bridge
+            mcp_tools = mcp_bridge.get_hive_tools()
+            if mcp_tools:
+                from hive.tools import register_mcp_tools
+                register_mcp_tools(mcp_tools)
+        except ImportError:
+            pass
+
         tools_schema = self.llm.build_tools_schema(TOOLS)
         conversation = list(messages)
         iteration = 0
