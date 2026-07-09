@@ -77,7 +77,8 @@ def _print_help():
         "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
         "[prompt]/cleanup[/prompt]        Run agent garbage collection\n"
         "[prompt]/create-agent \\[task][/prompt]  Create a specialist agent\n"
-        "[prompt]/mcp[/prompt]            Manage MCP servers (add, remove, tools)\n"
+        "[prompt]/mcp[/prompt]            Manage MCP servers (add, auth, tools)\n"
+        "[prompt]/mcp auth \\[name][/prompt]    Authenticate OAuth MCP server\n"
         "[prompt]/google-login[/prompt]     Open browser for manual Google sign-in\n"
         "[prompt]/oauth \\[github|google][/prompt]  OAuth login flow\n"
         "[prompt]/clear[/prompt]          Clear screen"
@@ -607,7 +608,7 @@ class HiveCLI:
 
     async def _handle_mcp_command(self, arg: str):
         """Handle /mcp commands for MCP server management."""
-        from hive.mcp.config import mcp_config, MCPServerConfig
+        from hive.mcp.config import mcp_config, MCPServerConfig, has_stored_token, delete_mcp_token
         from hive.mcp.client import mcp_client
         from hive.mcp.bridge import mcp_bridge
         from hive.tools import register_mcp_tools, unregister_mcp_tools
@@ -625,41 +626,94 @@ class HiveCLI:
 
             table = _table("MCP Servers")
             table.add_column("Name", style="agent")
-            table.add_column("URL", style="dim", max_width=40)
+            table.add_column("URL", style="dim", max_width=35)
+            table.add_column("Auth", style="white")
             table.add_column("Status", style="white")
             table.add_column("Tools", style="green", justify="right")
 
             for server in servers:
-                status = "[green]● connected[/green]" if mcp_client.is_connected(server.name) else "[red]○ offline[/red]"
-                tool_count = len(mcp_bridge.get_tools_for_server(server.name)) if mcp_client.is_connected(server.name) else "—"
-                if not server.enabled:
+                is_connected = mcp_client.is_connected(server.name)
+                if server.auth_type == "oauth":
+                    auth = "[yellow]OAuth[/yellow]" if has_stored_token(server.name) else "[red]OAuth (not authed)[/red]"
+                elif server.headers.get("Authorization"):
+                    auth = "[green]Token[/green]"
+                else:
+                    auth = "[dim]none[/dim]"
+
+                if is_connected:
+                    status = "[green]● connected[/green]"
+                elif not server.enabled:
                     status = "[yellow]○ disabled[/yellow]"
-                table.add_row(server.name, server.url, status, str(tool_count))
+                else:
+                    status = "[red]○ offline[/red]"
+
+                tool_count = len(mcp_bridge.get_tools_for_server(server.name)) if is_connected else "—"
+                table.add_row(server.name, server.url, auth, status, str(tool_count))
 
             console.print(table)
             console.print()
 
         elif subcommand == "add":
-            # /mcp add <name> <url> [auth_header]
+            # /mcp add <name> <url> [auth_token]
             if len(parts) < 3:
                 console.print("[bold yellow]Usage:[/bold yellow] /mcp add <name> <url> [auth_token]\n")
-                console.print("[dim]Example: /mcp add gmail https://gmail-mcp.example.com/mcp your-api-key[/dim]\n")
+                console.print("[dim]Examples:[/dim]")
+                console.print("  [prompt]/mcp add myserver https://my-mcp-server.com/mcp my-api-key[/prompt]")
+                console.print("  [prompt]/mcp add gmail https://gmailmcp.googleapis.com/mcp[/prompt] [dim](OAuth)[/dim]\n")
                 return
 
             name = parts[1]
             url = parts[2]
             auth_token = parts[3] if len(parts) > 3 else None
 
-            headers = {}
-            if auth_token:
-                headers["Authorization"] = f"Bearer {auth_token}"
+            # Detect Google MCP servers — auto-enable OAuth
+            is_google = "googleapis.com" in url
+            if is_google:
+                console.print(f"[cyan]Detected Google MCP server[/cyan]")
+                console.print("[dim]This server requires OAuth authentication.[/dim]\n")
 
-            config = MCPServerConfig(name=name, url=url, headers=headers)
+                # Prompt for OAuth credentials
+                from rich.prompt import Prompt
+                client_id = Prompt.ask("  Enter your Google OAuth Client ID")
+                client_secret = Prompt.ask("  Enter your Google OAuth Client Secret", password=True)
+
+                if not client_id or not client_secret:
+                    console.print("[bold red]Error:[/bold red] Client ID and secret are required for Google MCP servers.\n")
+                    return
+
+                config = MCPServerConfig(
+                    name=name,
+                    url=url,
+                    auth_type="oauth",
+                    oauth_client_id=client_id,
+                    oauth_client_secret=client_secret,
+                )
+            else:
+                headers = {}
+                if auth_token:
+                    headers["Authorization"] = f"Bearer {auth_token}"
+                config = MCPServerConfig(name=name, url=url, headers=headers)
+
             success, msg = mcp_config.add_server(config)
             if not success:
                 console.print(f"[bold red]Error:[/bold red] {msg}\n")
                 return
 
+            if is_google:
+                # Run OAuth flow
+                console.print(f"[cyan]Starting OAuth authentication...[/cyan]")
+                console.print("[dim]A browser window will open. Log in and grant permissions.[/dim]\n")
+                try:
+                    auth_ok, auth_msg = await mcp_client.authenticate_oauth(config)
+                    if not auth_ok:
+                        console.print(f"[bold red]Authentication failed:[/bold red] {auth_msg}\n")
+                        return
+                    console.print(f"[success]Authentication successful![/success]\n")
+                except Exception as e:
+                    console.print(f"[bold red]Auth error:[/bold red] {e}\n")
+                    return
+
+            # Connect
             console.print(f"[cyan]Connecting to {name}...[/cyan]")
             try:
                 success, connect_msg = await mcp_client.connect(config)
@@ -670,7 +724,6 @@ class HiveCLI:
                 # Discover tools
                 ok, tools = await mcp_client.list_tools(name)
                 if ok and tools:
-                    # Register tools
                     from hive.mcp.bridge import convert_mcp_tool_to_hive
                     mcp_tools = {}
                     for tool in tools:
@@ -691,6 +744,74 @@ class HiveCLI:
             except Exception as e:
                 console.print(f"[yellow]Connection error:[/yellow] {e}\n")
 
+        elif subcommand == "auth":
+            # /mcp auth <name> [--logout]
+            if len(parts) < 2:
+                console.print("[bold yellow]Usage:[/bold yellow] /mcp auth <name> [--logout]\n")
+                console.print("[dim]Authenticate an OAuth-protected MCP server.[/dim]\n")
+                return
+
+            name = parts[1]
+            logout = "--logout" in arg
+
+            config = mcp_config.get_server(name)
+            if not config:
+                console.print(f"[bold red]Error:[/bold red] Server '{name}' not found. Use /mcp add first.\n")
+                return
+
+            if logout:
+                delete_mcp_token(name)
+                if mcp_client.is_connected(name):
+                    await mcp_client.disconnect(name)
+                    unregister_mcp_tools(name)
+                console.print(f"[success]Logged out from {name}.[/success] Tokens removed.\n")
+                return
+
+            if config.auth_type != "oauth":
+                console.print(f"[dim]Server '{name}' does not use OAuth.[/dim]\n")
+                return
+
+            # Disconnect if currently connected
+            if mcp_client.is_connected(name):
+                await mcp_client.disconnect(name)
+                unregister_mcp_tools(name)
+
+            console.print(f"[cyan]Starting OAuth authentication for {name}...[/cyan]")
+            console.print("[dim]A browser window will open. Log in and grant permissions.[/dim]\n")
+            try:
+                auth_ok, auth_msg = await mcp_client.authenticate_oauth(config)
+                if not auth_ok:
+                    console.print(f"[bold red]Authentication failed:[/bold red] {auth_msg}\n")
+                    return
+                console.print(f"[success]Authentication successful![/success]\n")
+            except Exception as e:
+                console.print(f"[bold red]Auth error:[/bold red] {e}\n")
+                return
+
+            # Reconnect
+            console.print(f"[cyan]Connecting to {name}...[/cyan]")
+            try:
+                success, connect_msg = await mcp_client.connect(config)
+                if success:
+                    ok, tools = await mcp_client.list_tools(name)
+                    if ok and tools:
+                        from hive.mcp.bridge import convert_mcp_tool_to_hive
+                        mcp_tools = {}
+                        for tool in tools:
+                            hive_name, hive_tool = convert_mcp_tool_to_hive(name, tool)
+                            mcp_tools[hive_name] = hive_tool
+                        register_mcp_tools(mcp_tools)
+                        mcp_bridge._server_tools[name] = list(mcp_tools.keys())
+                        for hn in mcp_tools:
+                            mcp_bridge._tool_map[hn] = (name, tool["name"])
+                        console.print(f"[success]Connected![/success] {len(tools)} tools available\n")
+                    else:
+                        console.print(f"[success]Connected![/success]\n")
+                else:
+                    console.print(f"[bold red]Error:[/bold red] {connect_msg}\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
+
         elif subcommand == "remove":
             # /mcp remove <name>
             if len(parts) < 2:
@@ -701,6 +822,9 @@ class HiveCLI:
             if mcp_client.is_connected(name):
                 await mcp_client.disconnect(name)
                 unregister_mcp_tools(name)
+
+            # Also remove tokens
+            delete_mcp_token(name)
 
             success, msg = mcp_config.remove_server(name)
             if success:
@@ -838,6 +962,8 @@ class HiveCLI:
             console.print("[bold yellow]MCP Commands:[/bold yellow]\n")
             console.print("  [prompt]/mcp[/prompt]                          Show all MCP servers\n")
             console.print("  [prompt]/mcp add[/prompt] <name> <url> [token]  Add and connect to a server\n")
+            console.print("  [prompt]/mcp auth[/prompt] <name>               Authenticate an OAuth server\n")
+            console.print("  [prompt]/mcp auth[/prompt] <name> --logout      Clear stored tokens\n")
             console.print("  [prompt]/mcp remove[/prompt] <name>              Remove an MCP server\n")
             console.print("  [prompt]/mcp connect[/prompt] <name>             Connect to a server\n")
             console.print("  [prompt]/mcp disconnect[/prompt] <name>          Disconnect from a server\n")
