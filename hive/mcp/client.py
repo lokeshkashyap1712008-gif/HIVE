@@ -384,7 +384,7 @@ class MCPClientManager:
             return False, f"Not connected to '{name}'"
 
         # Check if server supports tools
-        if not connection.server_capabilities.get("tools"):
+        if "tools" not in connection.server_capabilities:
             return False, f"Server '{name}' does not expose tools"
 
         result = await self._send_request(connection, "tools/list")
@@ -420,7 +420,7 @@ class MCPClientManager:
         if not connection or not connection.connected:
             return False, f"Not connected to '{name}'"
 
-        if not connection.server_capabilities.get("resources"):
+        if "resources" not in connection.server_capabilities:
             return False, f"Server '{name}' does not expose resources"
 
         result = await self._send_request(connection, "resources/list")
