@@ -33,7 +33,7 @@ SLASH_COMMANDS = [
     "/help", "/quit", "/exit", "/sessions", "/resume",
     "/agents", "/skills", "/model", "/clear", "/status", "/swarm",
     "/cleanup", "/create-agent", "/google-login", "/oauth",
-    "/mcp",
+    "/mcp", "/ppt",
 ]
 
 TEST_MODE = False
@@ -77,6 +77,7 @@ def _print_help():
         "[prompt]/swarm[/prompt]          Force swarm mode for next task\n"
         "[prompt]/cleanup[/prompt]        Run agent garbage collection\n"
         "[prompt]/create-agent \\[task][/prompt]  Create a specialist agent\n"
+        "[prompt]/ppt <topic>[/prompt]      Generate a polished PowerPoint deck\n"
         "[prompt]/mcp[/prompt]            Manage MCP servers (add, auth, tools)\n"
         "[prompt]/mcp auth \\[name][/prompt]    Authenticate OAuth MCP server\n"
         "[prompt]/google-login[/prompt]     Open browser for manual Google sign-in\n"
@@ -602,6 +603,26 @@ class HiveCLI:
 
         elif command == "/mcp":
             await self._handle_mcp_command(arg)
+
+        elif command == "/ppt":
+            topic = arg.strip()
+            if not topic:
+                console.print("[bold yellow]Usage:[/bold yellow] /ppt <topic> [output.pptx]\n")
+                return
+            output_path = None
+            if " " in topic:
+                parts = topic.split(None, 1)
+                topic = parts[0]
+                output_path = parts[1]
+            else:
+                output_path = None
+            try:
+                from hive.presentation import build_presentation
+                with console.status("[thinking]✢ Crafting presentation...[/thinking]", spinner="dots"):
+                    result = build_presentation(topic, output_path=output_path, slide_count=6, use_llm=False)
+                console.print(f"[success]Presentation created![/success] {result}\n")
+            except Exception as e:
+                console.print(f"[bold red]Error:[/bold red] {e}\n")
 
         else:
             console.print(f"[bold red]Error:[/bold red] Unknown command: [cyan]{command}[/cyan]\n")
