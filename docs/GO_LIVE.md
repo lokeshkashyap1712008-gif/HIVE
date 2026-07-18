@@ -32,10 +32,9 @@ bash scripts/bootstrap_alibaba_sas.sh
 
 ## C. Demo video (~20 min)
 
-1. Open `docs/demo-slides.html` for intro slides
-2. Follow `docs/DEMO_VIDEO.md`
-3. Upload public YouTube/Vimeo/Facebook
-4. Paste URL into `docs/SUBMISSION.md` and Devpost
+**Fast path (upload tonight):** upload [`docs/demo-preview.mp4`](demo-preview.mp4) to YouTube as **Public**, then record a better live cut when SAS is up.
+
+**Best path:** follow [`DEMO_VIDEO.md`](DEMO_VIDEO.md) with Workbench + live `python -m hive`, using [`demo-slides.html`](demo-slides.html) for the intro.
 
 ## D. Devpost submit (~10 min)
 

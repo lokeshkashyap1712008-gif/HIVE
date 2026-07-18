@@ -53,7 +53,9 @@ Same diagram is linked from the README.
 
 ## Demo video URL
 
-_Paste public YouTube / Vimeo / Facebook URL after recording — see [DEMO_VIDEO.md](DEMO_VIDEO.md)._
+Upload [`demo-preview.mp4`](demo-preview.mp4) (or your live recording) to YouTube/Vimeo/Facebook as **Public**, then paste the URL here and on Devpost.
+
+See [DEMO_VIDEO.md](DEMO_VIDEO.md) for the live-demo shot list.
 
 ```
 VIDEO_URL_HERE
