@@ -1,0 +1,24 @@
+# Deploy HIVE on Alibaba Cloud SAS/ECS (Docker image recommended).
+#   cp .env.example .env   # set DASHSCOPE_API_KEY
+#   docker compose up -d --build
+# Then open http://<public-ip>:8080/health for proof of deployment.
+
+services:
+  hive:
+    build: .
+    image: hive-os:latest
+    container_name: hive-agent
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - HIVE_HOME=/data/hive
+      - QWEN_MODEL=${QWEN_MODEL:-qwen3.7-plus}
+    volumes:
+      - hive-data:/data/hive
+    restart: unless-stopped
+    mem_limit: 3g
+
+volumes:
+  hive-data:

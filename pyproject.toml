@@ -59,8 +59,8 @@ dev = [
 hive = "hive.main:main"
 
 [project.urls]
-Homepage = "https://github.com/hive-os/hive"
-Repository = "https://github.com/hive-os/hive"
+Homepage = "https://github.com/lokeshkashyap1712008-gif/HIVE"
+Repository = "https://github.com/lokeshkashyap1712008-gif/HIVE"
 
 [tool.setuptools.packages.find]
 include = ["hive*"]

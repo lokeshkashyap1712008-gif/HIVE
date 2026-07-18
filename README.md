@@ -51,6 +51,15 @@ Every component maps to a hive function:
 
 ## Architecture
 
+![HIVE architecture — User → Alibaba SAS/ECS → Qwen Cloud DashScope](docs/architecture.png)
+
+User (CLI / Ink TUI) → **HIVE Core on Alibaba Cloud SAS/ECS** → SQLite + worker agents → **Qwen Cloud (DashScope)** for all LLM calls.
+
+**Hackathon track:** Agent Society · **Deploy guide:** [DEPLOY.md](DEPLOY.md) · **Go-live checklist:** [docs/GO_LIVE.md](docs/GO_LIVE.md) · **Alibaba API proof:** [`hive/llm.py`](hive/llm.py)
+
+<details>
+<summary>Internal society layout (ASCII)</summary>
+
 ```
                     ┌──────────────────────────────┐
                     │          HIVE CORE            │
@@ -102,6 +111,8 @@ Every component maps to a hive function:
     └────────────────────────────────────────────┘
 ```
 
+</details>
+
 ---
 
 ## Key Features
@@ -136,22 +147,32 @@ For every significant action, HIVE compares: how would a single agent handle thi
 ## Running HIVE
 
 ```bash
-cd hive
 pip install -e ".[browser]"   # or: pip install -r requirements.txt
 playwright install chromium    # required for Playwright browser tools
 # Optional: pip install browser-use  (Chrome-profile automation)
 
 cp .env.example .env
-# Edit .env — set DASHSCOPE_API_KEY at minimum
+# Edit .env — set DASHSCOPE_API_KEY (pay-as-you-go sk-... from home.qwencloud.com/api-keys)
+python scripts/verify_qwen_key.py
 
 python -m hive                 # interactive CLI
 python -m hive.cli --server    # JSON-lines server for Ink frontend
+python -m hive.deploy_server   # Alibaba proof endpoint on :8080
+```
+
+**Alibaba Cloud deploy (SAS + Docker):** see [DEPLOY.md](DEPLOY.md). Quick path:
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8080/health
 ```
 
 ```bash
 # Run browser smoke tests
 python test_browser_smoke.py
 ```
+
+**License:** MIT — see [LICENSE](LICENSE). **Submission kit:** [docs/SUBMISSION.md](docs/SUBMISSION.md)
 
 ---
 
@@ -257,46 +278,31 @@ HiveCore (Queen): "Complete. 3 potential price anomalies found."
 ## File Structure
 
 ```
-hive/
-├── README.md                    # This file
-├── main.py                      # FastAPI server entry point
-├── .env                         # Configuration (DASHSCOPE_API_KEY required)
-├── core/
-│   ├── config.py               # Settings from .env
-│   ├── llm_router.py           # Qwen Cloud integration
-│   ├── memory_manager.py       # RAM-aware agent limits
-│   ├── task_queue.py           # Distributed task queue
-│   ├── audit_logger.py         # Immutable decision log
-│   ├── message_bus.py         # Agent-to-agent messaging
-│   ├── agent_personality.py    # 14 unique agent personas
-│   ├── economy.py             # Credits, budget, cost tracking
-│   ├── agent_state.py          # Emotions, confidence, stress
-│   ├── single_vs_multi.py     # Single vs society benchmark
-│   └── debate_protocol.py     # 4-round structured debate
-├── agents/
-│   ├── leader.py              # HiveCore Queen Bee
-│   ├── agent_forge.py         # Agent Forge (Creator)
-│   ├── cleanup_crew.py        # Cleanup Crew (Deletor)
-│   ├── safety_agent.py        # Deterministic safety guardrail
-│   ├── judge.py               # Conflict resolution judge
-│   ├── debate_protocol.py    # Debate implementation
-│   └── workers/
-│       ├── web_scout.py       # Web Scout
-│       ├── account_manager.py # Account Manager
-│       ├── payment_agent.py   # Payment Agent
-│       ├── cloud_tester.py    # Cloud Tester
-│       ├── code_runner.py     # Code Runner
-│       ├── diagnostician.py  # Diagnostician
-│       ├── security_scout.py # Security Scout
-│       ├── code_architect.py  # Code Architect
-│       ├── report_agent.py    # Report Agent
-│       ├── red_team.py        # Red Team Agent
-│       ├── data_analyst.py    # Data Analyst
-│       ├── gpu_tuner.py       # GPU Tuner
-│       ├── scheduler.py       # Scheduler Agent
-│       └── communicator.py    # Communicator Agent
+.
+├── README.md
+├── DEPLOY.md                    # Alibaba SAS/ECS + Qwen Cloud deploy
+├── LICENSE                      # MIT
+├── Dockerfile
+├── docker-compose.yml
+├── docs/
+│   ├── architecture.svg         # Architecture diagram (SVG)
+│   ├── architecture.png         # Architecture diagram (PNG for Devpost)
+│   ├── DEMO_VIDEO.md            # 3-minute demo script
+│   └── SUBMISSION.md            # Devpost paste-ready fields
+├── scripts/
+│   ├── verify_qwen_key.py
+│   ├── bootstrap_alibaba_sas.sh
+│   └── docker_entrypoint.sh
+├── hive/
+│   ├── main.py                  # CLI entry (python -m hive)
+│   ├── llm.py                   # Qwen / DashScope client (Alibaba API proof)
+│   ├── deploy_server.py         # :8080 health proof for Alibaba deploy
+│   ├── config.py                # DASHSCOPE_API_KEY, QWEN_BASE_URL
+│   ├── core/                    # economy, debate, message bus, …
+│   ├── agents/                  # leader, forge, workers, …
+│   └── …
+├── hive-frontend/               # Ink / React TUI
 └── tests/
-    └── test_hive.py           # 10 unit tests
 ```
 
 ---

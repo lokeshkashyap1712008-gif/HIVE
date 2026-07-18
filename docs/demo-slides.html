@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HIVE Demo Slides — Agent Society</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --amber: #fbbf24;
+      --violet: #c4b5fd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      background: radial-gradient(1200px 600px at 10% 0%, #1a2740, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .slide {
+      display: none;
+      min-height: 100vh;
+      padding: 8vh 10vw;
+      flex-direction: column;
+      justify-content: center;
+      gap: 1rem;
+    }
+    .slide.active { display: flex; }
+    h1 { font-size: clamp(2rem, 5vw, 3.5rem); margin: 0; line-height: 1.1; }
+    h2 { font-size: clamp(1.4rem, 3vw, 2.2rem); margin: 0; color: var(--accent); }
+    p, li { font-family: ui-sans-serif, system-ui, sans-serif; color: var(--muted); font-size: 1.15rem; line-height: 1.5; max-width: 40rem; }
+    .brand { color: var(--amber); letter-spacing: 0.08em; font-size: 0.9rem; font-family: ui-sans-serif, system-ui, sans-serif; text-transform: uppercase; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+      white-space: pre-wrap;
+    }
+    .nav {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      display: flex;
+      gap: 0.5rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    button {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    .counter { position: fixed; bottom: 1.7rem; left: 1.5rem; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; }
+    img.arch { max-width: min(900px, 90vw); border-radius: 8px; border: 1px solid #334155; }
+    .violet { color: var(--violet); }
+  </style>
+</head>
+<body>
+  <section class="slide active" data-i="0">
+    <div class="brand">Qwen Cloud Hackathon · Agent Society</div>
+    <h1>HIVE</h1>
+    <p>An operating system where AI agents form temporary societies — debate, economy, reputation — powered by <span class="violet">Qwen Cloud</span> on Alibaba Cloud.</p>
+  </section>
+
+  <section class="slide" data-i="1">
+    <div class="brand">Architecture</div>
+    <h2>User → Alibaba SAS → Qwen Cloud</h2>
+    <img class="arch" src="architecture.png" alt="HIVE architecture diagram" />
+  </section>
+
+  <section class="slide" data-i="2">
+    <div class="brand">Alibaba API proof</div>
+    <h2>hive/llm.py → DashScope</h2>
+    <div class="panel">base_url = https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+model     = qwen3.7-plus
+env       = DASHSCOPE_API_KEY
+
+GitHub: …/blob/main/hive/llm.py</div>
+  </section>
+
+  <section class="slide" data-i="3">
+    <div class="brand">Runtime proof</div>
+    <h2>SAS Workbench + /health</h2>
+    <div class="panel">$ docker compose up -d --build
+$ curl http://&lt;PUBLIC_IP&gt;:8080/health
+
+{
+  "status": "ok",
+  "cloud": "Alibaba Cloud (SAS/ECS)",
+  "llm": { "provider": "Qwen Cloud / DashScope" }
+}</div>
+    <p>Switch to Workbench and live CLI for the next minute of the video.</p>
+  </section>
+
+  <section class="slide" data-i="4">
+    <div class="brand">Live demo</div>
+    <h2>Temporary agent society</h2>
+    <p>Run in the HIVE CLI:</p>
+    <div class="panel">Plan a secure approach to scrape public competitor pricing pages and summarize risks.</div>
+    <p>Show HiveCore allocating credits, debate rounds, and a judge verdict with confidence.</p>
+  </section>
+
+  <section class="slide" data-i="5">
+    <div class="brand">Submit</div>
+    <h1>Thanks</h1>
+    <p>Repo: github.com/lokeshkashyap1712008-gif/HIVE</p>
+    <p>Track: Agent Society · License: MIT · Brain: Qwen Cloud</p>
+  </section>
+
+  <div class="counter"><span id="n">1</span> / 6 · ← → or buttons</div>
+  <div class="nav">
+    <button type="button" id="prev">Prev</button>
+    <button type="button" id="next">Next</button>
+  </div>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    let i = 0;
+    function show(k) {
+      i = (k + slides.length) % slides.length;
+      slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+      document.getElementById("n").textContent = String(i + 1);
+    }
+    document.getElementById("prev").onclick = () => show(i - 1);
+    document.getElementById("next").onclick = () => show(i + 1);
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " ") show(i + 1);
+      if (e.key === "ArrowLeft") show(i - 1);
+    });
+  </script>
+</body>
+</html>
